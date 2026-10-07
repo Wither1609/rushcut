@@ -176,8 +176,14 @@ export interface DesignSystem {
   builtin?: boolean
 }
 
+/** How Rushcut reaches Claude: an API key, or the Claude Code CLI signed in with a Pro/Max subscription. */
+export type ClaudeAuth = 'api' | 'subscription'
+
 export interface Settings {
+  claudeAuth: ClaudeAuth
   anthropicKey: string
+  /** Claude Code executable; empty = found automatically. */
+  claudePath: string
   elevenKey: string
   claudeModel: string
   effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -186,12 +192,24 @@ export interface Settings {
 }
 
 export interface PublicSettings {
+  claudeAuth: ClaudeAuth
+  claudePath: string
   hasAnthropicKey: boolean
   hasElevenKey: boolean
   claudeModel: string
   effort: Settings['effort']
   scribeModel: string
   projectsDir: string
+}
+
+export interface ClaudeCodeStatus {
+  installed: boolean
+  path?: string
+  version?: string
+  loggedIn: boolean
+  authMethod?: string
+  email?: string
+  plan?: string
 }
 
 export interface ExportOptions {

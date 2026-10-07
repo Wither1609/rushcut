@@ -7,6 +7,7 @@ import {
   addIllustrations, createProject, deleteProject, removeIllustration, listProjects, loadBundle, loadProject, nextVersionName, projectDir, root, runImportPipeline, saveComments,
   saveCommentFrame, saveEdl, transcribeProject, updateProject
 } from './projects'
+import { claudeCodeStatus } from './claudeCode'
 import { deleteDesignSystem, getSettings, listDesignSystems, publicSettings, saveDesignSystem, setSettings } from './store'
 import { dismissJob, enqueue, listJobs, notifyProject } from './jobs'
 import { applyComments, designSystemFromImage, generateFirstCut } from './claude'
@@ -96,6 +97,7 @@ function registerIpc() {
     const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
     return setSettings(clean)
   })
+  handle('settings:claudeCode', () => claudeCodeStatus())
   handle('settings:pickDir', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], defaultPath: getSettings().projectsDir })
     return r.canceled ? null : setSettings({ projectsDir: r.filePaths[0] })

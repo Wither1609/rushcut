@@ -33,7 +33,7 @@ export function App() {
   useEffect(() => {
     void api.settings().then((s) => {
       setSettings(s)
-      if (!s.hasAnthropicKey || !s.hasElevenKey) setSettingsOpen(true)
+      if ((s.claudeAuth === 'api' && !s.hasAnthropicKey) || !s.hasElevenKey) setSettingsOpen(true)
     })
     void api.jobs().then(setJobs)
     return window.rushcut.on('jobs', (j) => setJobs(j as JobState[]))

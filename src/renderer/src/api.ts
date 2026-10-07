@@ -1,5 +1,5 @@
 import type {
-  Comment, DesignSystem, Edl, ExportOptions, Illustration, JobState, Project, ProjectBundle, PublicSettings, Recipe, Settings
+  ClaudeCodeStatus, Comment, DesignSystem, Edl, ExportOptions, Illustration, JobState, Project, ProjectBundle, PublicSettings, Recipe, Settings
 } from '../../shared/types'
 
 const c = <T,>(ch: string, ...a: unknown[]) => window.rushcut.call<T>(ch, ...a)
@@ -7,6 +7,7 @@ const c = <T,>(ch: string, ...a: unknown[]) => window.rushcut.call<T>(ch, ...a)
 export const api = {
   settings: () => c<PublicSettings>('settings:get'),
   setSettings: (p: Partial<Settings>) => c<PublicSettings>('settings:set', p),
+  claudeCodeStatus: () => c<ClaudeCodeStatus>('settings:claudeCode'),
   pickProjectsDir: () => c<PublicSettings | null>('settings:pickDir'),
   designSystems: () => c<DesignSystem[]>('ds:list'),
   saveDesignSystem: (d: DesignSystem) => c<DesignSystem[]>('ds:save', d),

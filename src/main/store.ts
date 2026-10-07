@@ -7,7 +7,9 @@ const file = () => path.join(app.getPath('userData'), 'settings.json')
 const dsFile = () => path.join(app.getPath('userData'), 'design-systems.json')
 
 const defaults = (): Settings => ({
+  claudeAuth: 'api',
   anthropicKey: '',
+  claudePath: '',
   elevenKey: '',
   claudeModel: 'claude-opus-5-5',
   effort: 'high',
@@ -61,6 +63,8 @@ export function setSettings(patch: Partial<Settings>): PublicSettings {
 export function publicSettings(): PublicSettings {
   const s = getSettings()
   return {
+    claudeAuth: s.claudeAuth,
+    claudePath: s.claudePath,
     hasAnthropicKey: !!s.anthropicKey,
     hasElevenKey: !!s.elevenKey,
     claudeModel: s.claudeModel,

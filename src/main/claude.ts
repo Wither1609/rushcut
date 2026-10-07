@@ -5,6 +5,7 @@ import fs from 'fs'
 import path from 'path'
 import { z } from 'zod'
 import { getSettings, getDesignSystem } from './store'
+import { callClaudeCode } from './claudeCode'
 import { fitToKeep, normalizeKeep, snapKeep } from '../shared/edl'
 import { briefPrompt } from '../shared/templates'
 import { applyOps, chapterRef, zoomRef, type EdlOp } from '../shared/ops'
@@ -15,7 +16,15 @@ const FALLBACK_MODELS = ['claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1',
 
 async function callJson<T>(label: string, system: string, content: BetaContentBlockParam[], schema: Record<string, unknown>, parser: z.ZodType<T>): Promise<T> {
   const s = getSettings()
-  if (!s.anthropicKey) throw new Error('Ajoute ta clé Claude (Anthropic) dans Réglages.')
+  if (s.claudeAuth === 'subscription') {
+    try {
+      return parser.parse(await callClaudeCode(label, system, content, schema))
+    } catch (e) {
+      if (e instanceof z.ZodError) throw new Error(`Réponse de Claude illisible (${label}).`)
+      throw e
+    }
+  }
+  if (!s.anthropicKey) throw new Error('Ajoute ta clé Claude (Anthropic) dans Réglages, ou choisis ton abonnement Claude.')
   const client = new Anthropic({ apiKey: s.anthropicKey })
   const fallback = FALLBACK_MODELS.includes(s.claudeModel)
   try {
