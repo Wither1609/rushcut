@@ -1,6 +1,8 @@
 // Shared data model. All times are in seconds of the SOURCE (raw) video.
 // The edited output is the concatenation of `keep` ranges; export maps source time to output time.
 
+import type { EdlOp } from './ops'
+
 export interface Word {
   text: string
   start: number
@@ -12,7 +14,7 @@ export interface Range {
   out: number
 }
 
-export type GfxComp = 'title' | 'lowerThird' | 'list' | 'callout' | 'number' | 'quote'
+export type GfxComp = 'title' | 'lowerThird' | 'list' | 'callout' | 'number' | 'quote' | 'image'
 
 export interface GfxItem {
   id: string
@@ -24,6 +26,10 @@ export interface GfxItem {
     subtitle?: string
     items?: string[]
     text?: string
+    /** image: file name in the project's assets/ folder. */
+    src?: string
+    /** image: framed card over the speaker, or full-screen cutaway. */
+    layout?: 'card' | 'full'
   }
 }
 
@@ -50,8 +56,10 @@ export interface Edl {
   chapters: Chapter[]
   zooms: Zoom[]
   gfx: GfxItem[]
-  captions: { enabled: boolean; maxWords: number; uppercase: boolean }
+  captions: { enabled: boolean; maxWords: number; uppercase: boolean; style?: CaptionStyle }
   resolves: string[]
+  /** For a revision: the edits Claude applied to `parent` to get this version. */
+  ops?: EdlOp[]
 }
 
 export type ShapeTool = 'pen' | 'ellipse' | 'arrow' | 'rect'
@@ -71,8 +79,32 @@ export interface Comment {
   sketch: Shape[]
   frame?: string // file name of the JPEG snapshot (frame + sketch) in comments/
   createdIn: string // version the comment was made on
+  /** The drawing was made on the vertical preview: its coordinates are relative to the 9:16 frame. */
+  aspect?: '9:16'
   fixedIn?: string
   createdAt: string
+}
+
+export type CaptionStyle = 'karaoke' | 'pop' | 'box' | 'minimal'
+
+/** An image the creator added to the project (logo, product shot, b-roll still…), stored in assets/. */
+export interface Illustration {
+  file: string
+  label: string
+}
+
+/** Answers from the onboarding questions, read by Claude before the first cut. */
+export interface Brief {
+  template: string
+  goal: 'inform' | 'sell' | 'entertain' | 'inspire'
+  audience: string
+  tone: string[]
+  pace: 'calm' | 'balanced' | 'punchy'
+  zooms: 'none' | 'subtle' | 'dynamic'
+  gfx: 'none' | 'light' | 'rich'
+  captionStyle: CaptionStyle
+  hook: boolean
+  done: boolean
 }
 
 export interface Recipe {
@@ -97,6 +129,9 @@ export interface MediaInfo {
   hasAudio: boolean
 }
 
+/** Error message of a job the user cancelled: shown as a plain notice, not as a failure. */
+export const CANCELLED = 'Tâche annulée'
+
 export interface JobState {
   id: string
   label: string
@@ -118,6 +153,10 @@ export interface Project {
   notes: string
   designSystem: string
   recipe?: Recipe
+  brief?: Brief
+  illustrations?: Illustration[]
+  /** Output framing chosen in the player or the export dialog (see shared/frame.ts). */
+  frame?: { aspect: 'source' | '9:16'; cropX: number }
 }
 
 export interface ProjectBundle {
@@ -144,8 +183,14 @@ export interface DesignSystem {
   builtin?: boolean
 }
 
+/** How Rushcut reaches Claude: an API key, or the Claude Code CLI signed in with a Pro/Max subscription. */
+export type ClaudeAuth = 'api' | 'subscription'
+
 export interface Settings {
+  claudeAuth: ClaudeAuth
   anthropicKey: string
+  /** Claude Code executable; empty = found automatically. */
+  claudePath: string
   elevenKey: string
   claudeModel: string
   effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -154,6 +199,8 @@ export interface Settings {
 }
 
 export interface PublicSettings {
+  claudeAuth: ClaudeAuth
+  claudePath: string
   hasAnthropicKey: boolean
   hasElevenKey: boolean
   claudeModel: string
@@ -162,10 +209,27 @@ export interface PublicSettings {
   projectsDir: string
 }
 
+export interface ClaudeCodeStatus {
+  installed: boolean
+  path?: string
+  version?: string
+  loggedIn: boolean
+  authMethod?: string
+  email?: string
+  plan?: string
+}
+
 export interface ExportOptions {
   version: string
+  /** Short side of the output: 1080 gives 1920×1080 in 16:9 and 1080×1920 in 9:16. */
   height: 720 | 1080 | 2160
   burnCaptions: boolean
+  /** 'source' keeps the rush's framing; '9:16' crops it to vertical for Reels, TikTok and Shorts. */
+  aspect?: 'source' | '9:16'
+  /** 9:16 only: horizontal position of the crop, 0 = left edge, 0.5 = centre, 1 = right edge. */
+  cropX?: number
+  /** Also write a .srt subtitle file next to the video. */
+  srt?: boolean
 }
 
 export const BUILTIN_DS: DesignSystem[] = [

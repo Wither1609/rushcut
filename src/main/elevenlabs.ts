@@ -11,7 +11,7 @@ interface ScribeWord {
 }
 
 /** Word-level transcription with ElevenLabs Scribe. Runs in the cloud: no local CPU. */
-export async function transcribe(audioFile: string): Promise<Word[]> {
+export async function transcribe(audioFile: string, signal?: AbortSignal): Promise<Word[]> {
   const { elevenKey, scribeModel } = getSettings()
   if (!elevenKey) throw new Error('Ajoute ta clé ElevenLabs dans Réglages pour lancer la transcription.')
   const form = new FormData()
@@ -22,7 +22,8 @@ export async function transcribe(audioFile: string): Promise<Word[]> {
   const res = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
     method: 'POST',
     headers: { 'xi-api-key': elevenKey },
-    body: form
+    body: form,
+    signal
   })
   if (!res.ok) {
     const body = await res.text()

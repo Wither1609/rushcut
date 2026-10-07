@@ -4,7 +4,7 @@ import { Home } from './Home'
 import { Editor } from './Editor'
 import { SettingsModal } from './components/SettingsModal'
 import { Jobs } from './components/Jobs'
-import type { JobState, PublicSettings } from '../../shared/types'
+import { CANCELLED, type JobState, type PublicSettings } from '../../shared/types'
 
 export const Logo = () => (
   <svg width="22" height="22" viewBox="0 0 28 28" aria-hidden="true">
@@ -25,6 +25,8 @@ export function App() {
   const [toast, setToast] = useState<{ msg: string; err: boolean } | null>(null)
 
   const notify: Notify = useCallback((msg, err = false) => {
+    // The user stopped it on purpose: a plain notice, not a failure.
+    if (msg === CANCELLED) err = false
     setToast({ msg, err })
     clearTimeout(toastTimer)
     toastTimer = setTimeout(() => setToast(null), err ? 7000 : 3500)
@@ -33,7 +35,7 @@ export function App() {
   useEffect(() => {
     void api.settings().then((s) => {
       setSettings(s)
-      if (!s.hasAnthropicKey || !s.hasElevenKey) setSettingsOpen(true)
+      if ((s.claudeAuth === 'api' && !s.hasAnthropicKey) || !s.hasElevenKey) setSettingsOpen(true)
     })
     void api.jobs().then(setJobs)
     return window.rushcut.on('jobs', (j) => setJobs(j as JobState[]))

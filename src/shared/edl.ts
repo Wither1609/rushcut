@@ -86,6 +86,69 @@ export function splitAt(keep: Range[], t: number): Range[] {
   return [...keep.slice(0, i), { in: r.in, out: t }, { in: t, out: r.out }, ...keep.slice(i + 1)]
 }
 
+export const PAD_IN = 0.08
+export const PAD_OUT = 0.15
+
+/**
+ * Move every cut onto a word boundary. A word stays in a range when its middle is inside it;
+ * each edge then lands in the gap next to the first/last kept word, with a little breathing room
+ * when the gap allows it. Edges listed in `fixed` (already in the previous version) and edit
+ * points between two touching ranges are left alone.
+ */
+export function snapKeep(keep: Range[], words: Word[], duration: number, fixed: number[] = []): Range[] {
+  if (!words.length) return normalizeKeep(keep, duration)
+  const isFixed = (x: number) => fixed.some((f) => Math.abs(f - x) < 1e-3)
+  const mid = (w: Word) => (w.start + w.end) / 2
+  const out = keep.map((r, k) => {
+    const touchPrev = k > 0 && r.in - keep[k - 1].out <= 0.02
+    const touchNext = k + 1 < keep.length && keep[k + 1].in - r.out <= 0.02
+    let a = r.in
+    if (!touchPrev && !isFixed(r.in)) {
+      // n = first word whose middle is after the edge: it is the first word kept by this range, if any.
+      let n = Math.max(0, wordAt(words, r.in))
+      while (n < words.length && mid(words[n]) < r.in) n++
+      const lo = n > 0 ? words[n - 1].end : 0
+      const hi = n < words.length ? words[n].start : duration
+      if (n < words.length && mid(words[n]) < r.out) {
+        // An edge that fell inside the previous (dropped) word is pulled back to the usual margin.
+        a = a < lo ? Math.max(lo, hi - PAD_IN) : Math.max(lo, Math.min(a, hi - PAD_IN))
+      } else a = Math.min(Math.max(a, lo), hi) // no speech kept: just get out of any word
+    }
+    let b = r.out
+    if (!touchNext && !isFixed(r.out)) {
+      // m = last word whose middle is before the edge: the last word kept by this range, if any.
+      let m = wordAt(words, r.out)
+      while (m >= 0 && mid(words[m]) >= r.out) m--
+      const lo = m >= 0 ? words[m].end : 0
+      const hi = m + 1 < words.length ? words[m + 1].start : duration
+      if (m >= 0 && mid(words[m]) >= r.in) {
+        b = b > hi ? Math.min(hi, lo + PAD_OUT) : Math.min(hi, Math.max(b, lo + PAD_OUT))
+      } else b = Math.max(Math.min(b, hi), lo)
+    }
+    return { in: a, out: b }
+  })
+  // Merge only what overlaps after snapping, so deliberate edit points (touching ranges) survive.
+  const merged: Range[] = []
+  for (const r of out) {
+    const prev = merged[merged.length - 1]
+    if (prev && r.in < prev.out - 1e-3) prev.out = Math.max(prev.out, r.out)
+    else if (r.out - r.in > 0.04) merged.push(r)
+  }
+  return merged
+}
+
+/** Move graphics and zooms that start in a removed passage to the next kept frame; drop what no longer fits. */
+export function fitToKeep<T extends { t: number; d: number }>(items: T[], keep: Range[], minD: number): T[] {
+  const res: T[] = []
+  for (const it of items) {
+    const t = nextPlayable(keep, it.t)
+    if (t === null) continue
+    const d = it.d - (t - it.t)
+    if (d > minD) res.push({ ...it, t, d })
+  }
+  return res
+}
+
 /** Binary search: index of the last word starting at or before t. */
 export function wordAt(words: Word[], t: number): number {
   let lo = 0

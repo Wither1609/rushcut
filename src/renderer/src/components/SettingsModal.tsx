@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { Notify } from '../App'
-import type { PublicSettings, Settings } from '../../../shared/types'
+import type { ClaudeAuth, ClaudeCodeStatus, PublicSettings, Settings } from '../../../shared/types'
 
 const MODELS = [
   { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (recommandé)' },
@@ -10,14 +10,35 @@ const MODELS = [
 ]
 
 export function SettingsModal({ settings, onChange, onClose, notify }: { settings: PublicSettings; onChange: (s: PublicSettings) => void; onClose: () => void; notify: Notify }) {
+  const [claudeAuth, setAuth] = useState<ClaudeAuth>(settings.claudeAuth)
+  const [claudePath, setPath] = useState(settings.claudePath)
+  const [cc, setCc] = useState<ClaudeCodeStatus | null>(null)
+  const [checking, setChecking] = useState(false)
   const [anthropicKey, setA] = useState('')
   const [elevenKey, setE] = useState('')
   const [claudeModel, setModel] = useState(settings.claudeModel)
   const [effort, setEffort] = useState(settings.effort)
   const [scribeModel, setScribe] = useState(settings.scribeModel)
 
+  const check = async () => {
+    setChecking(true)
+    try {
+      // The path typed here is saved first, so the check uses it.
+      if (claudePath.trim() !== settings.claudePath) onChange(await api.setSettings({ claudePath: claudePath.trim() }))
+      setCc(await api.claudeCodeStatus())
+    } catch (e) {
+      notify((e as Error).message, true)
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  useEffect(() => {
+    if (claudeAuth === 'subscription' && !cc) void check()
+  }, [claudeAuth])
+
   const save = async () => {
-    const patch: Partial<Settings> = { claudeModel, effort, scribeModel }
+    const patch: Partial<Settings> = { claudeAuth, claudePath: claudePath.trim(), claudeModel, effort, scribeModel }
     if (anthropicKey.trim()) patch.anthropicKey = anthropicKey.trim()
     if (elevenKey.trim()) patch.elevenKey = elevenKey.trim()
     try {
@@ -39,10 +60,43 @@ export function SettingsModal({ settings, onChange, onClose, notify }: { setting
         </div>
 
         <span className="eyebrow">Connecteurs</span>
-        <label className="field">
-          <span>Clé API Claude (Anthropic) {settings.hasAnthropicKey && <b className="pill ok">enregistrée</b>}</span>
-          <input id="anthropicKey" className="input mono" type="password" placeholder={settings.hasAnthropicKey ? '•••••••• (laisser vide pour garder)' : 'sk-ant-…'} value={anthropicKey} onChange={(e) => setA(e.target.value)} />
-        </label>
+        <div className="field">
+          <span>Connexion à Claude</span>
+          <div className="seg">
+            <button aria-pressed={claudeAuth === 'subscription'} onClick={() => setAuth('subscription')}>Mon abonnement Claude</button>
+            <button aria-pressed={claudeAuth === 'api'} onClick={() => setAuth('api')}>Clé API</button>
+          </div>
+        </div>
+        {claudeAuth === 'subscription' ? (
+          <div className="field">
+            <span>
+              Claude Code{' '}
+              {checking ? (
+                <b className="pill">vérification…</b>
+              ) : cc?.installed && cc.loggedIn ? (
+                <b className="pill ok">connecté{cc.plan ? ` · ${cc.plan}` : ''}{cc.email ? ` · ${cc.email}` : ''}</b>
+              ) : cc?.installed ? (
+                <b className="pill pin">non connecté</b>
+              ) : cc ? (
+                <b className="pill pin">introuvable</b>
+              ) : null}
+            </span>
+            <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+              Le montage passe par Claude Code, connecté à ton abonnement Pro ou Max : pas de clé API, l’usage compte dans les limites de ton abonnement.
+              {cc && !cc.installed && <> Installe Claude Code (claude.com/claude-code), puis connecte-toi.</>}
+              {cc?.installed && !cc.loggedIn && <> Dans un terminal, lance <code>claude auth login</code>, puis clique sur Vérifier.</>}
+            </p>
+            <div className="row">
+              <input id="claudePath" className="input mono" placeholder={cc?.path ?? 'Chemin de claude (détecté automatiquement)'} value={claudePath} onChange={(e) => setPath(e.target.value)} />
+              <button className="btn" disabled={checking} onClick={() => void check()}>Vérifier</button>
+            </div>
+          </div>
+        ) : (
+          <label className="field">
+            <span>Clé API Claude (Anthropic) {settings.hasAnthropicKey && <b className="pill ok">enregistrée</b>}</span>
+            <input id="anthropicKey" className="input mono" type="password" placeholder={settings.hasAnthropicKey ? '•••••••• (laisser vide pour garder)' : 'sk-ant-…'} value={anthropicKey} onChange={(e) => setA(e.target.value)} />
+          </label>
+        )}
         <label className="field">
           <span>Clé API ElevenLabs {settings.hasElevenKey && <b className="pill ok">enregistrée</b>}</span>
           <input id="elevenKey" className="input mono" type="password" placeholder={settings.hasElevenKey ? '•••••••• (laisser vide pour garder)' : 'clé xi-api-key'} value={elevenKey} onChange={(e) => setE(e.target.value)} />
