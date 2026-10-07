@@ -41,7 +41,7 @@ export function saveProject(p: Project) {
   writeJson(path.join(projectDir(p.id), 'project.json'), p)
 }
 
-export function updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'notes' | 'designSystem' | 'current' | 'recipe' | 'brief' | 'illustrations'>>) {
+export function updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'notes' | 'designSystem' | 'current' | 'recipe' | 'brief' | 'illustrations' | 'frame'>>) {
   const p = { ...loadProject(id), ...patch }
   saveProject(p)
   return p

@@ -5,6 +5,7 @@ import { GfxLayer } from '../gfx/GfxLayer'
 import { drawShape, INK_COLORS, shapeIsUsable } from '../ink'
 import { nextPlayable, tc } from '../../../shared/edl'
 import type { CaptionChunk } from '../../../shared/overlay'
+import { cropRect, type Frame } from '../../../shared/frame'
 import type { Comment, DesignSystem, Edl, Project, Shape, ShapeTool } from '../../../shared/types'
 
 export interface PlayerHandle {
@@ -25,6 +26,10 @@ interface Props {
   drawMode: boolean
   skipCuts: boolean
   speed: number
+  /** Output framing: the player shows exactly what the export will keep. */
+  frame: Frame
+  /** Drag on the vertical picture to move the crop; persist on release. */
+  onFrame: (f: Frame, persist: boolean) => void
   onAttach: (shapes: Shape[]) => void
   onCloseDraw: () => void
 }
@@ -48,7 +53,9 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
   const video = useRef<HTMLVideoElement>(null)
   const ink = useRef<HTMLCanvasElement>(null)
   const [box, setBox] = useState({ w: 640, h: 360 })
-  const aspect = project.media.width / project.media.height
+  const vertical = p.frame.aspect === '9:16'
+  const crop = cropRect(project.media, p.frame)
+  const aspect = vertical ? 9 / 16 : project.media.width / project.media.height
   const src = project.ready.proxy ? mediaUrl(project.id, 'proxy.mp4') : mediaUrl(project.id, '__source')
   const [mediaError, setMediaError] = useState(false)
   const edlRef = useRef(edl)
@@ -157,16 +164,19 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
   const cur = useRef<Shape | null>(null)
   const nearSketchKey = useRef('')
 
+  // A drawing is only meaningful over the framing it was drawn on.
+  const showSketch = (cm: Comment, t: number) => !cm.fixedIn && cm.sketch.length > 0 && Math.abs(cm.t - t) < 1.2 && (cm.aspect === '9:16') === vertical
+
   const redrawInk = useCallback(() => {
     const c = ink.current
     if (!c) return
     const ctx = c.getContext('2d')!
     ctx.clearRect(0, 0, c.width, c.height)
     const t = clock.t
-    for (const cm of p.comments) if (!cm.fixedIn && cm.sketch.length && Math.abs(cm.t - t) < 1.2) cm.sketch.forEach((s) => drawShape(ctx, s, c.width, c.height))
+    for (const cm of p.comments) if (showSketch(cm, t)) cm.sketch.forEach((s) => drawShape(ctx, s, c.width, c.height))
     for (const s of live) drawShape(ctx, s, c.width, c.height)
     if (cur.current) drawShape(ctx, cur.current, c.width, c.height)
-  }, [p.comments, live])
+  }, [p.comments, live, vertical])
 
   useEffect(() => {
     const c = ink.current!
@@ -180,13 +190,13 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
   useEffect(
     () =>
       clock.subscribe((t) => {
-        const key = p.comments.filter((cm) => !cm.fixedIn && cm.sketch.length && Math.abs(cm.t - t) < 1.2).map((c) => c.id).join()
+        const key = p.comments.filter((cm) => showSketch(cm, t)).map((c) => c.id).join()
         if (key !== nearSketchKey.current) {
           nearSketchKey.current = key
           redrawInk()
         }
       }),
-    [p.comments, redrawInk]
+    [p.comments, redrawInk, vertical]
   )
 
   useEffect(() => {
@@ -233,34 +243,72 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
       captureFrame: (shapes) => {
         const v = video.current
         if (!v || !v.videoWidth) return null
-        const W = 960
+        // The picture the reviewer saw: the 9:16 crop in vertical, so the drawing lands on the right spot.
+        const W = vertical ? 540 : 960
         const H = Math.round(W / aspect)
         const c = document.createElement('canvas')
         c.width = W
         c.height = H
         const ctx = c.getContext('2d')!
-        ctx.drawImage(v, 0, 0, W, H)
+        ctx.drawImage(v, crop.x * v.videoWidth, crop.y * v.videoHeight, crop.w * v.videoWidth, crop.h * v.videoHeight, 0, 0, W, H)
         shapes.forEach((s) => drawShape(ctx, s, W, H))
         return c.toDataURL('image/jpeg', 0.85)
       }
     }),
-    [aspect, play]
+    [aspect, play, vertical, crop.x, crop.y, crop.w, crop.h]
   )
 
-  const designW = 1080 * aspect
+  // Drag the vertical picture sideways to choose what the 9:16 frame keeps.
+  const reframe = useRef<{ x0: number; c0: number; moved: boolean } | null>(null)
+  const range = box.w / crop.w - box.w // how far the video can slide, in px
+  const cropAt = (e: React.PointerEvent) => Math.min(1, Math.max(0, reframe.current!.c0 - (e.clientX - reframe.current!.x0) / range))
+
+  // Graphics are designed for a 1080 px short side, as in the export: 1080×1920 vertical, N×1080 landscape.
+  const designW = vertical ? 1080 : 1080 * aspect
+  const designH = vertical ? 1920 : 1080
   return (
     <div className="viewer" ref={viewer}>
-      <div className={`screen${p.drawMode ? ' drawing' : ''}`} style={{ width: box.w, height: box.h }}>
+      <div
+        className={`screen${p.drawMode ? ' drawing' : ''}${vertical && range > 1 ? ' reframable' : ''}`}
+        style={{ width: box.w, height: box.h }}
+        title={vertical && range > 1 && !p.drawMode ? 'Glisse l’image pour recadrer' : undefined}
+        onPointerDown={(e) => {
+          if (!vertical || p.drawMode || range <= 1 || e.button !== 0) return
+          e.currentTarget.setPointerCapture(e.pointerId)
+          reframe.current = { x0: e.clientX, c0: p.frame.cropX, moved: false }
+        }}
+        onPointerMove={(e) => {
+          if (!reframe.current) return
+          if (Math.abs(e.clientX - reframe.current.x0) > 2) reframe.current.moved = true
+          if (reframe.current.moved) p.onFrame({ ...p.frame, cropX: cropAt(e) }, false)
+        }}
+        onPointerUp={(e) => {
+          const r = reframe.current
+          reframe.current = null
+          if (r?.moved) p.onFrame({ ...p.frame, cropX: Math.min(1, Math.max(0, r.c0 - (e.clientX - r.x0) / range)) }, true)
+        }}
+      >
         <video
           ref={video}
           src={src}
+          crossOrigin="anonymous"
+          style={{
+            left: (-crop.x * box.w) / crop.w,
+            top: (-crop.y * box.h) / crop.h,
+            width: box.w / crop.w,
+            height: box.h / crop.h,
+            right: 'auto',
+            bottom: 'auto',
+            // Zooms push in on the frame the export keeps: its centre, 40 % down.
+            transformOrigin: `${(crop.x + crop.w / 2) * 100}% ${(crop.y + crop.h * 0.4) * 100}%`
+          }}
           preload="auto"
           playsInline
           onError={() => setMediaError(true)}
           onLoadedData={() => setMediaError(false)}
         />
-        <div style={{ position: 'absolute', left: 0, top: 0, width: designW, height: 1080, transform: `scale(${box.h / 1080})`, transformOrigin: '0 0', pointerEvents: 'none' }}>
-          <Overlay edl={edl} chunks={p.chunks} ds={p.ds} width={designW} projectId={project.id} />
+        <div style={{ position: 'absolute', left: 0, top: 0, width: designW, height: designH, transform: `scale(${box.h / designH})`, transformOrigin: '0 0', pointerEvents: 'none' }}>
+          <Overlay edl={edl} chunks={p.chunks} ds={p.ds} width={designW} height={designH} projectId={project.id} />
         </div>
         <canvas
           ref={ink}
@@ -287,7 +335,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
             else redrawInk()
           }}
         />
-        <span className="badge">{edl.version}</span>
+        <span className="badge">{edl.version}{vertical ? ' · 9:16' : ''}</span>
         {mediaError && (
           <div className="notice">
             {project.ready.proxy ? 'Lecture impossible.' : 'Ce format ne se lit pas directement. Le proxy est en préparation, la vidéo apparaîtra dès qu’il est prêt.'}
@@ -329,10 +377,10 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
 })
 
 /** The only part of the screen that re-renders every frame during playback. */
-function Overlay({ edl, chunks, ds, width, projectId }: { edl: Edl; chunks: CaptionChunk[]; ds: DesignSystem; width: number; projectId: string }) {
+function Overlay({ edl, chunks, ds, width, height, projectId }: { edl: Edl; chunks: CaptionChunk[]; ds: DesignSystem; width: number; height: number; projectId: string }) {
   const t = useSyncExternalStore((cb) => clock.subscribe(cb), () => clock.t)
   const gfx = useMemo(() => edl.gfx, [edl.gfx])
-  return <GfxLayer t={t} gfx={gfx} chunks={edl.captions.enabled ? chunks : []} ds={ds} uppercase={edl.captions.uppercase} width={width} captionStyle={edl.captions.style} projectId={projectId} />
+  return <GfxLayer t={t} gfx={gfx} chunks={edl.captions.enabled ? chunks : []} ds={ds} uppercase={edl.captions.uppercase} width={width} height={height} captionStyle={edl.captions.style} projectId={projectId} />
 }
 
 export function Timecode({ duration }: { duration: number }) {

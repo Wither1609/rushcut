@@ -19,6 +19,10 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'rushcut', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } }
 ])
 
+// The page is on another origin (file:// or the dev server): without this header, a canvas that draws
+// the video is tainted and the note's frame cannot be saved.
+const CORS = { 'Access-Control-Allow-Origin': '*' }
+
 const MIME: Record<string, string> = { '.webp': 'image/webp', '.gif': 'image/gif', '.jpeg': 'image/jpeg', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.jpg': 'image/jpeg', '.png': 'image/png', '.mp3': 'audio/mpeg', '.json': 'application/json' }
 
 /** rushcut://p/<projectId>/<file> serves project files, with byte ranges so the video can seek. */
@@ -40,11 +44,11 @@ function registerProtocol() {
         const body = Readable.toWeb(fs.createReadStream(file, { start, end })) as ReadableStream
         return new Response(body, {
           status: 206,
-          headers: { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(end - start + 1) }
+          headers: { ...CORS, 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(end - start + 1) }
         })
       }
       const body = Readable.toWeb(fs.createReadStream(file)) as ReadableStream
-      return new Response(body, { headers: { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': String(size), 'Cache-Control': 'no-cache' } })
+      return new Response(body, { headers: { ...CORS, 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': String(size), 'Cache-Control': 'no-cache' } })
     } catch {
       return new Response('not found', { status: 404 })
     }

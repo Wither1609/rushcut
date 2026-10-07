@@ -13,6 +13,7 @@ import { Onboarding } from './components/Onboarding'
 import { StylePanel } from './components/StylePanel'
 import { cutRange, editedDuration, keepIndexAt, restoreRange, shortTime, splitAt, srcToOut } from '../../shared/edl'
 import { buildChunks } from '../../shared/overlay'
+import { canGoVertical, projectFrame, type Frame } from '../../shared/frame'
 import { BUILTIN_DS, type Chapter, type Comment, type DesignSystem, type Edl, type ExportOptions, type JobState, type ProjectBundle, type Shape, type Word, type Zoom } from '../../shared/types'
 
 interface Props {
@@ -104,6 +105,7 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
   }, [b])
 
   const version = b?.project.current ?? 'V0'
+  const frame: Frame = b ? projectFrame(b.project) : { aspect: 'source', cropX: 0.5 }
   const edl = b?.edls[version] ?? null
   const ds = dsList.find((d) => d.id === edl?.designSystem) ?? BUILTIN_DS[0]
   const chunks = useMemo(() => (b && edl ? buildChunks(b.words, edl.keep, edl.captions.maxWords) : []), [b, edl])
@@ -160,6 +162,15 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
       commit(step.edl, false)
     },
     [edl, b, commit, setWords]
+  )
+
+  /** Framing of the preview and the export. Dragging updates it live; it is saved on release. */
+  const setFrame = useCallback(
+    (frame: Frame, persist = true) => {
+      setB((cur) => (cur ? { ...cur, project: { ...cur.project, frame } } : cur))
+      if (persist) void api.updateProject(projectId, { frame }).catch((e) => notify(e.message, true))
+    },
+    [projectId, notify]
   )
 
   const saveComments = useCallback(
@@ -255,17 +266,24 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
   const submitComment = async (text: string) => {
     if (!b || !draft) return
     const id = 'c' + Date.now().toString(36)
-    let frame: string | undefined
-    const jpg = player.current?.captureFrame(draft.sketch)
-    if (jpg) frame = await api.saveFrame(projectId, id, jpg).catch(() => undefined)
+    let frameFile: string | undefined
+    // Without the frame, Claude only gets the text: still better than losing the note.
+    let jpg: string | null = null
+    try {
+      jpg = player.current?.captureFrame(draft.sketch) ?? null
+    } catch (e) {
+      console.warn('Image de la note non capturée', e)
+    }
+    if (jpg) frameFile = await api.saveFrame(projectId, id, jpg).catch(() => undefined)
     const c: Comment = {
       id,
       t: draft.t,
       text: text || (draft.sketch.length ? 'Voir le dessin' : 'À revoir'),
       sketch: draft.sketch,
-      frame,
+      frame: frameFile,
       createdIn: version,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...(frame.aspect === '9:16' ? { aspect: '9:16' as const } : {})
     }
     saveComments([...b.comments, c])
     setDraft(null)
@@ -299,6 +317,8 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
 
   const doExport = async (v: string, height: 720 | 1080 | 2160, burn: boolean, extra: Pick<ExportOptions, 'aspect' | 'cropX' | 'srt'> = {}) => {
     setModal(null)
+    // The framing chosen in the export dialog becomes the preview's too.
+    if (extra.aspect) setFrame({ aspect: extra.aspect, cropX: extra.cropX ?? frame.cropX })
     try {
       const out = await api.exportVideo(projectId, { version: v, height, burnCaptions: burn, ...extra })
       notify('Export terminé')
@@ -470,6 +490,8 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
               drawMode={drawMode}
               skipCuts={skipCuts}
               speed={speed}
+              frame={frame}
+              onFrame={setFrame}
               onAttach={(shapes) => startPin(shapes)}
               onCloseDraw={() => setDrawMode(false)}
             />
@@ -509,6 +531,16 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
                 </button>
                 <span className="tp-sep" />
                 <button className="txt-btn mono" onClick={() => setSpeed((s) => (s === 1 ? 1.5 : s === 1.5 ? 2 : 1))} title="Vitesse de lecture">{speed}×</button>
+                {canGoVertical(p.media) && (
+                  <button
+                    className="txt-btn mono"
+                    aria-pressed={frame.aspect === '9:16'}
+                    onClick={() => setFrame({ ...frame, aspect: frame.aspect === '9:16' ? 'source' : '9:16' })}
+                    title={frame.aspect === '9:16' ? 'Revenir au format d’origine' : 'Voir en vertical 9:16, comme sur Reels, TikTok et Shorts'}
+                  >
+                    {frame.aspect === '9:16' ? '9:16' : p.media.width > p.media.height ? '16:9' : 'Orig.'}
+                  </button>
+                )}
                 <button className="txt-btn" aria-pressed={!skipCuts} onClick={() => setSkipCuts((s) => !s)} title="Montrer les passages coupés pendant la lecture (H)">
                   {skipCuts ? 'Monté' : 'Brut'}
                 </button>

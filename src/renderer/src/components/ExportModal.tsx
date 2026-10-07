@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { mediaUrl } from '../api'
-import { TEMPLATES } from '../../../shared/templates'
+import { projectFrame } from '../../../shared/frame'
 import type { ExportOptions, Project } from '../../../shared/types'
 
 type Extra = Pick<ExportOptions, 'aspect' | 'cropX' | 'srt'>
@@ -16,16 +16,16 @@ interface Props {
 export function ExportModal({ project, versions, current, onClose, onExport }: Props) {
   const { media } = project
   const [version, setVersion] = useState(current)
-  // A project started from a vertical template (Reel / Short) exports in 9:16 by default.
-  const tpl = TEMPLATES.find((t) => t.id === project.brief?.template)
-  const [aspect, setAspect] = useState<'source' | '9:16'>(tpl?.format === '9:16' && media.width > media.height ? '9:16' : 'source')
+  // Starts from the framing shown in the player (or the template's, for a Reel / Short).
+  const initial = projectFrame(project)
+  const [aspect, setAspect] = useState<'source' | '9:16'>(initial.aspect)
   const vertical = aspect === '9:16'
   const options = vertical ? ([720, 1080] as const) : ([720, 1080, 2160] as const).filter((h) => h <= Math.max(720, media.height))
   const [height, setHeight] = useState<720 | 1080 | 2160>(1080)
   const h = (options as readonly number[]).includes(height) ? height : options[options.length - 1]
   const [burn, setBurn] = useState(true)
   const [srt, setSrt] = useState(false)
-  const [cropX, setCropX] = useState(0.5)
+  const [cropX, setCropX] = useState(initial.cropX)
   // Share of the rush width kept by the vertical crop (1 when the rush is already narrower than 9:16).
   const keepW = Math.min(1, (media.height * 9) / 16 / media.width)
 

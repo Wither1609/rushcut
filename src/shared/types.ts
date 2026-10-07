@@ -79,6 +79,8 @@ export interface Comment {
   sketch: Shape[]
   frame?: string // file name of the JPEG snapshot (frame + sketch) in comments/
   createdIn: string // version the comment was made on
+  /** The drawing was made on the vertical preview: its coordinates are relative to the 9:16 frame. */
+  aspect?: '9:16'
   fixedIn?: string
   createdAt: string
 }
@@ -153,6 +155,8 @@ export interface Project {
   recipe?: Recipe
   brief?: Brief
   illustrations?: Illustration[]
+  /** Output framing chosen in the player or the export dialog (see shared/frame.ts). */
+  frame?: { aspect: 'source' | '9:16'; cropX: number }
 }
 
 export interface ProjectBundle {

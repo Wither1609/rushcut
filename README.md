@@ -52,7 +52,7 @@ L'app n'est pas signée. Au premier lancement :
 6. **Export** : le rendu part du rush original.
    - Chaque segment est mis en cache : une V3 qui touche deux coupes ne ré-encode que ces deux coupes.
    - Le motion design est capturé seulement aux instants où il change (170 images pour 15 s au lieu de 450).
-   - Format **Vertical 9:16** (Reels, TikTok, Shorts) : le rush est recadré, un curseur règle la position du cadre. Les graphismes et sous-titres se placent hors des zones couvertes par l'interface des réseaux.
+   - Format **Vertical 9:16** (Reels, TikTok, Shorts) : le rush est recadré. Les graphismes et sous-titres se placent hors des zones couvertes par l'interface des réseaux. Le bouton **16:9 / 9:16** de la barre de lecture montre ce cadrage dans le lecteur, tel qu'il sera exporté. Glisse l'image sur le côté pour choisir ce qui reste dans le cadre. Le format et le cadrage sont enregistrés avec le projet et repris par la fenêtre d'export.
    - Option **.srt** : un fichier de sous-titres, par phrases, à côté de la vidéo.
 
 ### Onboarding avant la V1
