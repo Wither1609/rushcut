@@ -1,11 +1,14 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { nativeImage } from 'electron'
 import type { BetaContentBlockParam } from '@anthropic-ai/sdk/resources/beta/messages/messages'
 import fs from 'fs'
 import path from 'path'
 import { z } from 'zod'
 import { getSettings, getDesignSystem } from './store'
-import { normalizeKeep } from '../shared/edl'
-import { FONT_CHOICES, type Comment, type DesignSystem, type Edl, type GfxComp, type ProjectBundle, type Recipe } from '../shared/types'
+import { fitToKeep, normalizeKeep, snapKeep } from '../shared/edl'
+import { briefPrompt } from '../shared/templates'
+import { applyOps, chapterRef, zoomRef, type EdlOp } from '../shared/ops'
+import { FONT_CHOICES, type CaptionStyle, type Comment, type DesignSystem, type Edl, type GfxComp, type ProjectBundle, type Recipe } from '../shared/types'
 
 // Models that accept server-side refusal fallbacks (`fallbacks: "default"`).
 const FALLBACK_MODELS = ['claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1', 'claude-sonnet-5-5']
@@ -43,7 +46,7 @@ async function callJson<T>(label: string, system: string, content: BetaContentBl
 // ---------------------------------------------------------------------------
 // Edit decision list
 
-const GFX_COMPS: GfxComp[] = ['title', 'lowerThird', 'list', 'callout', 'number', 'quote']
+const GFX_COMPS: GfxComp[] = ['title', 'lowerThird', 'list', 'callout', 'number', 'quote', 'image']
 
 const obj = (properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties })
 const arr = (items: unknown) => ({ type: 'array', items })
@@ -61,7 +64,9 @@ const EDL_SCHEMA = obj({
       title: { type: 'string' },
       subtitle: { type: 'string' },
       text: { type: 'string' },
-      items: arr({ type: 'string' })
+      items: arr({ type: 'string' }),
+      image: { type: 'string', description: 'image comp only: file name of one provided illustration, else empty' },
+      layout: { type: 'string', enum: ['card', 'full'] }
     })
   ),
   captions: obj({ enabled: { type: 'boolean' }, maxWords: { type: 'integer' }, uppercase: { type: 'boolean' } }),
@@ -81,7 +86,9 @@ const EdlDraft = z.object({
       title: z.string(),
       subtitle: z.string(),
       text: z.string(),
-      items: z.array(z.string())
+      items: z.array(z.string()),
+      image: z.string(),
+      layout: z.enum(['card', 'full'])
     })
   ),
   captions: z.object({ enabled: z.boolean(), maxWords: z.number(), uppercase: z.boolean() }),
@@ -106,12 +113,15 @@ gfx — motion design overlays, rendered with the project's design system. Times
 - callout: one punchy keyword or short phrase (text) to emphasise what is being said.
 - number: a big figure (title = the figure, subtitle = what it measures).
 - quote: a short sentence worth reading on screen (text).
-- Durations 2.5–6 s. Aim for roughly one graphic every 12–25 s of edited time, timed to the words they illustrate. Unused fields are empty strings / empty arrays.
+- image: one of the creator's illustration images (image = its file name), shown when the speaker talks about what it depicts. layout "card" frames it beside the speaker; layout "full" is a full-screen cutaway with a slow push-in (2–4 s). Use each provided image at least once when it fits the content, never invent file names. Without provided images, never use this comp.
+- Durations 2.5–6 s. Unless the brief says otherwise, aim for roughly one graphic every 12–25 s of edited time, timed to the words they illustrate. Unused fields are empty strings / empty arrays, layout "card".
 - On-screen text is short and written in the language of the transcript.
 
 zooms — punch-in zooms on emphasis: scale 1.08–1.2, duration 1.5–5 s, roughly every second or third sentence. Do not stack zooms with title cards.
 chapters — one per topic section, with a short title in the transcript's language.
-captions — word-by-word subtitles. Default enabled, maxWords 3, uppercase true, unless instructions say otherwise.
+captions — word-by-word subtitles. Default enabled, maxWords 3, uppercase true, unless the brief or instructions say otherwise.
+
+When a <brief> is given, it comes from the creator's onboarding answers: follow its pace, zoom and graphics density over the defaults above.
 resolves — ids of the review comments your EDL addresses (empty for a first cut).
 summary — in French, for the editor UI.`
 
@@ -125,6 +135,7 @@ function contextBlock(b: ProjectBundle, ds: DesignSystem): string {
   const r = b.project.recipe
   return [
     `<design_system name="${ds.name}">${ds.note}. Background ${ds.bg}, text ${ds.fg}, accent ${ds.accent}, font ${ds.font}.</design_system>`,
+    b.project.brief ? `<brief>\n${briefPrompt(b.project.brief)}\n</brief>` : '',
     b.project.notes.trim() ? `<creator_notes>\n${b.project.notes.trim()}\n</creator_notes>` : '',
     r
       ? `<reference_recipe source="${r.source}">\nMatch this editing style taken from a reference video.\nRhythm: ${r.rhythm} (average shot ${r.avgShot.toFixed(1)} s)\nZooms: ${r.zooms}\nCaptions: ${r.captions}\nGraphics: ${r.graphics}\nStructure: ${r.structure}\nSound: ${r.sound}\nSummary: ${r.summary}\n</reference_recipe>`
@@ -134,9 +145,28 @@ function contextBlock(b: ProjectBundle, ds: DesignSystem): string {
     .join('\n\n')
 }
 
-function toEdl(d: EdlDraft, b: ProjectBundle, version: string, parent: string | null, ds: string): Edl {
+/** Each illustration as a small JPEG with its file name and the creator's label, so Claude knows what it shows. */
+function illustrationBlocks(b: ProjectBundle): BetaContentBlockParam[] {
+  const list = b.project.illustrations ?? []
+  if (!list.length) return []
+  const out: BetaContentBlockParam[] = [{ type: 'text', text: `<illustrations count="${list.length}">The creator provided these images for image graphics.</illustrations>` }]
+  for (const il of list.slice(0, 16)) {
+    const img = nativeImage.createFromPath(path.join(b.project.dir, 'assets', il.file))
+    if (img.isEmpty()) continue
+    const { width } = img.getSize()
+    const jpg = (width > 640 ? img.resize({ width: 640, quality: 'good' }) : img).toJPEG(80)
+    out.push({ type: 'text', text: `<illustration file="${il.file}">${il.label}</illustration>` })
+    out.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: jpg.toString('base64') } })
+  }
+  return out
+}
+
+function toEdl(d: EdlDraft, b: ProjectBundle, version: string, parent: string | null, ds: string, captionStyle?: CaptionStyle): Edl {
   const dur = b.project.media.duration
-  const keep = normalizeKeep(d.keep, dur)
+  const images = new Set((b.project.illustrations ?? []).map((i) => i.file))
+  // Claude is asked to cut between words; this makes sure of it.
+  const snapped = snapKeep(normalizeKeep(d.keep, dur), b.words, dur)
+  const keep = snapped.length ? snapped : [{ in: 0, out: dur }]
   return {
     version,
     parent,
@@ -145,21 +175,38 @@ function toEdl(d: EdlDraft, b: ProjectBundle, version: string, parent: string | 
     origin: 'claude',
     designSystem: ds,
     summary: d.summary,
-    keep: keep.length ? keep : [{ in: 0, out: dur }],
+    keep,
     chapters: d.chapters.filter((c) => c.t >= 0 && c.t <= dur).sort((a, c) => a.t - c.t),
-    zooms: d.zooms
-      .filter((z) => z.t >= 0 && z.t < dur && z.d > 0.3)
-      .map((z) => ({ t: z.t, d: Math.min(z.d, 8), scale: Math.min(1.35, Math.max(1.02, z.scale)) })),
-    gfx: d.gfx
-      .filter((g) => g.t >= 0 && g.t < dur && g.d > 0.5)
-      .map((g, i) => ({
-        id: `g${Date.now().toString(36)}${i}`,
-        t: g.t,
-        d: Math.min(g.d, 12),
-        comp: g.comp,
-        props: { title: g.title, subtitle: g.subtitle, text: g.text, items: g.items.filter(Boolean).slice(0, 6) }
-      })),
-    captions: { enabled: d.captions.enabled, maxWords: Math.min(8, Math.max(1, Math.round(d.captions.maxWords))), uppercase: d.captions.uppercase },
+    zooms: fitToKeep(
+      d.zooms
+        .filter((z) => z.t >= 0 && z.t < dur && z.d > 0.3)
+        .map((z) => ({ t: z.t, d: Math.min(z.d, 8), scale: Math.min(1.35, Math.max(1.02, z.scale)) })),
+      keep,
+      0.3
+    ),
+    gfx: fitToKeep(
+      d.gfx
+        .filter((g) => g.t >= 0 && g.t < dur && g.d > 0.5)
+        .filter((g) => g.comp !== 'image' || images.has(g.image))
+        .map((g, i) => ({
+          id: `g${Date.now().toString(36)}${i}`,
+          t: g.t,
+          d: Math.min(g.d, 12),
+          comp: g.comp,
+          props:
+            g.comp === 'image'
+              ? { src: g.image, layout: g.layout, title: g.title, subtitle: g.subtitle }
+              : { title: g.title, subtitle: g.subtitle, text: g.text, items: g.items.filter(Boolean).slice(0, 6) }
+        })),
+      keep,
+      0.5
+    ),
+    captions: {
+      enabled: d.captions.enabled,
+      maxWords: Math.min(8, Math.max(1, Math.round(d.captions.maxWords))),
+      uppercase: d.captions.uppercase,
+      style: captionStyle ?? b.project.brief?.captionStyle ?? 'karaoke'
+    },
     resolves: d.resolves
   }
 }
@@ -173,6 +220,7 @@ export async function generateFirstCut(b: ProjectBundle, version: string, dsId: 
     [
       { type: 'text', text: transcriptBlock(b), cache_control: { type: 'ephemeral' } },
       { type: 'text', text: contextBlock(b, ds) || 'No extra context.' },
+      ...illustrationBlocks(b),
       { type: 'text', text: 'Produce the first cut (V1) of this recording.' }
     ],
     EDL_SCHEMA,
@@ -188,39 +236,118 @@ function nearWords(b: ProjectBundle, t: number) {
     .join(' ')
 }
 
+// Revisions are edits on the previous version, not a new EDL: what the review did not mention cannot move.
+
+const num = { type: 'number' }
+const str = { type: 'string' }
+const opt = (op: string, properties: Record<string, unknown> = {}) => obj({ op: { type: 'string', enum: [op] }, ...properties })
+const gfxFields = { t: num, d: num, comp: { type: 'string', enum: GFX_COMPS }, title: str, subtitle: str, text: str, items: arr(str), image: str, layout: { type: 'string', enum: ['card', 'full'] } }
+
+const OPS_SCHEMA = obj({
+  summary: { type: 'string', description: 'En français, 1 à 3 phrases : ce qui a changé par rapport à la version précédente.' },
+  ops: arr({
+    anyOf: [
+      opt('cut', { a: num, b: num }),
+      opt('restore', { a: num, b: num }),
+      opt('gfx_add', gfxFields),
+      opt('gfx_update', { ref: str, ...gfxFields }),
+      opt('gfx_remove', { ref: str }),
+      opt('zoom_add', { t: num, d: num, scale: num }),
+      opt('zoom_update', { ref: str, t: num, d: num, scale: num }),
+      opt('zoom_remove', { ref: str }),
+      opt('chapter_add', { t: num, title: str }),
+      opt('chapter_update', { ref: str, t: num, title: str }),
+      opt('chapter_remove', { ref: str }),
+      opt('captions', { enabled: { type: 'boolean' }, maxWords: { type: 'integer' }, uppercase: { type: 'boolean' } })
+    ]
+  }),
+  resolves: arr(str)
+})
+
+const zGfx = { t: z.number(), d: z.number(), comp: z.enum(GFX_COMPS as [GfxComp, ...GfxComp[]]), title: z.string(), subtitle: z.string(), text: z.string(), items: z.array(z.string()), image: z.string(), layout: z.enum(['card', 'full']) }
+const zRef = { ref: z.string() }
+const OpsDraft = z.object({
+  summary: z.string(),
+  ops: z.array(
+    z.discriminatedUnion('op', [
+      z.object({ op: z.literal('cut'), a: z.number(), b: z.number() }),
+      z.object({ op: z.literal('restore'), a: z.number(), b: z.number() }),
+      z.object({ op: z.literal('gfx_add'), ...zGfx }),
+      z.object({ op: z.literal('gfx_update'), ...zRef, ...zGfx }),
+      z.object({ op: z.literal('gfx_remove'), ...zRef }),
+      z.object({ op: z.literal('zoom_add'), t: z.number(), d: z.number(), scale: z.number() }),
+      z.object({ op: z.literal('zoom_update'), ...zRef, t: z.number(), d: z.number(), scale: z.number() }),
+      z.object({ op: z.literal('zoom_remove'), ...zRef }),
+      z.object({ op: z.literal('chapter_add'), t: z.number(), title: z.string() }),
+      z.object({ op: z.literal('chapter_update'), ...zRef, t: z.number(), title: z.string() }),
+      z.object({ op: z.literal('chapter_remove'), ...zRef }),
+      z.object({ op: z.literal('captions'), enabled: z.boolean(), maxWords: z.number(), uppercase: z.boolean() })
+    ])
+  ),
+  resolves: z.array(z.string())
+})
+
+const REVISE_INSTRUCTIONS = `You now revise an existing edit. Do not return a full EDL: return the list of ops that turn the current EDL into the new version. Anything you do not touch stays exactly as it is.
+
+ops (applied in order):
+- cut {a, b}: remove the source range a–b from the edit. Cut between words: a ≈ 0.15 s after the last word you keep, b ≈ 0.08 s before the next word you keep. The app snaps both ends onto word boundaries.
+- restore {a, b}: bring back a removed source range.
+- gfx_add {t, d, comp, …}: new graphic. gfx_update {ref, …all fields}: replace an existing graphic (send every field, changed or not). gfx_remove {ref}.
+- zoom_add {t, d, scale}, zoom_update {ref, t, d, scale}, zoom_remove {ref}.
+- chapter_add {t, title}, chapter_update {ref, t, title}, chapter_remove {ref}.
+- captions {enabled, maxWords, uppercase}: only if a comment is about captions.
+ref is the id shown in the current EDL (graphics: their id; zooms: z0, z1…; chapters: c0, c1…). Times are source seconds.
+A comment about something the EDL cannot do (colour grading, sound, re-recording…) gets no op: leave it out of resolves and explain it in the summary.`
+
 export async function applyComments(b: ProjectBundle, base: Edl, open: Comment[], version: string, dsId: string): Promise<Edl> {
   const ds = getDesignSystem(dsId)
   const content: BetaContentBlockParam[] = [
     { type: 'text', text: transcriptBlock(b), cache_control: { type: 'ephemeral' } },
     { type: 'text', text: contextBlock(b, ds) || 'No extra context.' },
+    ...illustrationBlocks(b),
     {
       type: 'text',
       text: `<current_edl version="${base.version}">\n${JSON.stringify({
         keep: base.keep,
-        chapters: base.chapters,
-        zooms: base.zooms,
-        gfx: base.gfx.map((g) => ({ t: g.t, d: g.d, comp: g.comp, ...g.props })),
+        chapters: base.chapters.map((c, i) => ({ ref: chapterRef(i), ...c })),
+        zooms: base.zooms.map((z, i) => ({ ref: zoomRef(i), ...z })),
+        gfx: base.gfx.map(({ id, t, d, comp, props: { src, ...props } }) => ({ ref: id, t, d, comp, ...props, ...(src ? { image: src } : {}) })),
         captions: base.captions
       })}\n</current_edl>`
     }
   ]
-  // Each comment comes with the frame the reviewer saw, drawing included.
-  for (const c of open.slice(0, 20)) {
+  // Each comment comes with the frame the reviewer saw, drawing included (images capped to keep the request small).
+  open.forEach((c, i) => {
+    const f = i < 20 && c.frame ? path.join(b.project.dir, 'comments', c.frame) : null
+    const img = f && fs.existsSync(f)
     content.push({
       type: 'text',
       text: `<comment id="${c.id}" t="${c.t.toFixed(2)}">\n${c.text}\nWords around this moment: "${nearWords(b, c.t)}"${
-        c.sketch.length ? `\nThe reviewer drew ${c.sketch.map((s) => s.tool).join(', ')} on the frame below to point at what they mean.` : ''
+        c.sketch.length && img ? `\nThe reviewer drew ${c.sketch.map((s) => s.tool).join(', ')} on the frame below to point at what they mean.` : ''
       }\n</comment>`
     })
-    const f = c.frame && path.join(b.project.dir, 'comments', c.frame)
-    if (f && fs.existsSync(f)) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: fs.readFileSync(f).toString('base64') } })
-  }
+    if (img) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: fs.readFileSync(f).toString('base64') } })
+  })
   content.push({
     type: 'text',
-    text: `Produce ${version}: apply every review comment above to the current EDL. Change only what the comments ask for, plus what those changes require; keep the rest identical. List the ids you addressed in resolves. If a comment cannot be done in an EDL, leave it out of resolves and say why in the summary.`
+    text: `Produce ${version}: return the ops that apply every review comment above to the current EDL (${base.version}). Change only what the comments ask for, plus what those changes require. List the comment ids you addressed in resolves.`
   })
-  const draft = await callJson(version, EDITOR_SYSTEM, content, EDL_SCHEMA, EdlDraft)
-  return toEdl(draft, b, version, base.version, dsId)
+  const draft = await callJson(version, `${EDITOR_SYSTEM}\n\n${REVISE_INSTRUCTIONS}`, content, OPS_SCHEMA, OpsDraft)
+  const ops = draft.ops as EdlOp[]
+  const r = applyOps(base, ops, b.words, b.project.media.duration, (b.project.illustrations ?? []).map((i) => i.file))
+  const ids = new Set(open.map((c) => c.id))
+  return {
+    ...r.edl,
+    version,
+    parent: base.version,
+    createdAt: new Date().toISOString(),
+    status: 'review',
+    origin: 'claude',
+    designSystem: dsId,
+    summary: draft.summary + (r.skipped.length ? ` (${r.skipped.length} modification${r.skipped.length > 1 ? 's' : ''} ignorée${r.skipped.length > 1 ? 's' : ''} : ${r.skipped.join(' ; ')})` : ''),
+    resolves: draft.resolves.filter((id) => ids.has(id)),
+    ops
+  }
 }
 
 // ---------------------------------------------------------------------------

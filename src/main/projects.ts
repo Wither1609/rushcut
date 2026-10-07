@@ -6,7 +6,7 @@ import { FFMPEG, fileExists, probe, run, THREADS, videoEncoderArgs } from './ffm
 import { enqueue, notifyProject } from './jobs'
 import { transcribe } from './elevenlabs'
 import { emptyEdl } from '../shared/edl'
-import { PEAKS_PER_SEC, type Comment, type Edl, type Project, type ProjectBundle, type Range, type Word } from '../shared/types'
+import { PEAKS_PER_SEC, type Comment, type Edl, type Illustration, type Project, type ProjectBundle, type Range, type Word } from '../shared/types'
 
 export const root = () => getSettings().projectsDir
 
@@ -41,7 +41,7 @@ export function saveProject(p: Project) {
   writeJson(path.join(projectDir(p.id), 'project.json'), p)
 }
 
-export function updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'notes' | 'designSystem' | 'current' | 'recipe'>>) {
+export function updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'notes' | 'designSystem' | 'current' | 'recipe' | 'brief' | 'illustrations'>>) {
   const p = { ...loadProject(id), ...patch }
   saveProject(p)
   return p
@@ -107,6 +107,33 @@ export function saveCommentFrame(id: string, commentId: string, dataUrl: string)
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, name), Buffer.from(dataUrl.split(',')[1], 'base64'))
   return name
+}
+
+// ---------------------------------------------------------------------------
+// Illustration images: copied into assets/ so the project stays self-contained.
+
+const IMAGE_EXT = ['.png', '.jpg', '.jpeg', '.webp', '.gif']
+
+export function addIllustrations(id: string, files: string[]): Illustration[] {
+  const p = loadProject(id)
+  const dir = path.join(p.dir, 'assets')
+  fs.mkdirSync(dir, { recursive: true })
+  const list = [...(p.illustrations ?? [])]
+  for (const f of files) {
+    const ext = path.extname(f).toLowerCase()
+    if (!IMAGE_EXT.includes(ext)) continue
+    const base = path.basename(f, path.extname(f))
+    const file = `${base.replace(/[^\w-]+/g, '-').slice(0, 40)}-${crypto.randomBytes(2).toString('hex')}${ext}`
+    fs.copyFileSync(f, path.join(dir, file))
+    list.push({ file, label: base.replace(/[-_]+/g, ' ').trim() })
+  }
+  return updateProject(id, { illustrations: list }).illustrations ?? []
+}
+
+export function removeIllustration(id: string, file: string): Illustration[] {
+  const p = loadProject(id)
+  fs.rmSync(path.join(p.dir, 'assets', path.basename(file)), { force: true })
+  return updateProject(id, { illustrations: (p.illustrations ?? []).filter((i) => i.file !== file) }).illustrations ?? []
 }
 
 export function deleteProject(id: string) {

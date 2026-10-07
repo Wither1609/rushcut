@@ -8,6 +8,7 @@ import { getDesignSystem } from './store'
 import type { JobCtx } from './jobs'
 import { editedDuration } from '../shared/edl'
 import { buildChunks, chunksToOut, gfxToOut, sampleTimes } from '../shared/overlay'
+import { buildSrt } from '../shared/srt'
 import type { ExportOptions, Range } from '../shared/types'
 
 const sha = (v: unknown) => crypto.createHash('sha1').update(JSON.stringify(v)).digest('hex').slice(0, 16)
@@ -51,8 +52,13 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
   if (!edl) throw new Error(`Version ${opts.version} introuvable`)
   const { media, dir } = { media: b.project.media, dir: b.project.dir }
   const ds = getDesignSystem(edl.designSystem)
-  const H = even(Math.min(opts.height, media.height))
-  const W = even((H * media.width) / media.height)
+  const vertical = opts.aspect === '9:16'
+  // Vertical: 1080 means 1080×1920, whatever the rush. Landscape: never upscale the rush.
+  const W = vertical ? even(opts.height) : even((Math.min(opts.height, media.height) * media.width) / media.height)
+  const H = vertical ? even((W * 16) / 9) : even(Math.min(opts.height, media.height))
+  // Cut the 9:16 frame out of the rush. Heads sit in the upper part of the frame, hence 0.4 when cropping height.
+  const cropX = Math.min(1, Math.max(0, opts.cropX ?? 0.5))
+  const reframe = vertical ? `crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)':x='(iw-ow)*${cropX.toFixed(3)}':y='(ih-oh)*0.4',` : ''
   const FPS = Math.min(60, Math.max(24, Math.round(media.fps) || 30))
   const total = editedDuration(edl.keep)
   const cache = path.join(dir, 'cache')
@@ -66,7 +72,7 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
   let reused = 0
   for (const [i, p] of list.entries()) {
     const len = p.out - p.in
-    const file = path.join(cache, `p_${sha({ src: media.path, size: stat.size, mtime: stat.mtimeMs, p, W, H, FPS, pieceEnc })}.mkv`)
+    const file = path.join(cache, `p_${sha({ src: media.path, size: stat.size, mtime: stat.mtimeMs, p, W, H, FPS, pieceEnc, reframe })}.mkv`)
     files.push(file)
     if (fs.existsSync(file)) {
       reused++
@@ -75,6 +81,7 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
     ctx.progress(i / list.length * 0.5, `Segments ${i + 1}/${list.length}`)
     const s = p.scale
     const vf =
+      reframe +
       (s > 1.001 ? `crop=iw/${s}:ih/${s}:(iw-iw/${s})/2:(ih-ih/${s})*0.4,` : '') + `scale=${W}:${H}:flags=lanczos,setsar=1,fps=${FPS},format=yuv420p`
     const fade = Math.min(0.012, len / 4)
     const af = `aresample=48000,afade=t=in:d=${fade},afade=t=out:st=${(len - fade).toFixed(3)}:d=${fade}`
@@ -95,7 +102,7 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
   const chunks = edl.captions.enabled && opts.burnCaptions ? chunksToOut(buildChunks(b.words, edl.keep, edl.captions.maxWords), edl.keep) : []
   let overlayTxt: string | null = null
   if (gfxOut.length || chunks.length) {
-    const payload = { gfx: gfxOut, chunks, ds, W, H, uppercase: edl.captions.uppercase }
+    const payload = { gfx: gfxOut, chunks, ds, W, H, uppercase: edl.captions.uppercase, projectId: b.project.id, captionStyle: edl.captions.style }
     const odir = path.join(cache, `overlay_${sha({ payload, FPS, v: 2 })}`)
     overlayTxt = path.join(odir, 'list.txt')
     if (!fs.existsSync(overlayTxt)) {
@@ -116,7 +123,8 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
   // 3. Final pass: concat without re-decoding the raw, overlay, encode once.
   const outDir = path.join(dir, 'exports')
   fs.mkdirSync(outDir, { recursive: true })
-  const out = path.join(outDir, `${b.project.name.replace(/[^\w-]+/g, '-')}-${opts.version}-${H}p.mp4`)
+  const out = path.join(outDir, `${b.project.name.replace(/[^\w-]+/g, '-')}-${opts.version}-${vertical ? `${W}x${H}` : `${H}p`}.mp4`)
+  if (opts.srt) fs.writeFileSync(out.replace(/\.mp4$/, '.srt'), buildSrt(b.words, edl.keep))
   const finalEnc = await videoEncoderArgs(H >= 2160 ? 40000 : H >= 1080 ? 12000 : 6000, 19, 'fast')
   const args = ['-f', 'concat', '-safe', '0', '-i', piecesTxt]
   if (overlayTxt) {

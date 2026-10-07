@@ -15,6 +15,8 @@ export const LIST_STAGGER = 0.55
 
 /** Seconds after its start when a graphic stops moving. */
 export function gfxSettle(g: GfxItem): number {
+  // A full-screen image pushes in slowly for its whole duration.
+  if (g.comp === 'image' && g.props.layout === 'full') return g.d
   return GFX_IN + (g.comp === 'list' ? Math.max(0, (g.props.items?.length ?? 1) - 1) * LIST_STAGGER : 0)
 }
 

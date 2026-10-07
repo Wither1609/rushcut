@@ -245,8 +245,8 @@ export function Timeline(p: Props) {
 }
 
 function labelFor(g: GfxItem) {
-  const name = { title: 'Titre', lowerThird: 'Lower third', list: 'Liste', callout: 'Accroche', number: 'Chiffre', quote: 'Citation' }[g.comp]
-  return `${name} · ${g.props.title || g.props.text || (g.props.items ?? []).join(', ')}`
+  const name = { title: 'Titre', lowerThird: 'Lower third', list: 'Liste', callout: 'Accroche', number: 'Chiffre', quote: 'Citation', image: 'Image' }[g.comp]
+  return `${name} · ${g.props.title || g.props.text || (g.props.items ?? []).join(', ') || g.props.src || ''}`
 }
 
 export { LABEL_W }

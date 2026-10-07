@@ -1,5 +1,5 @@
 import type {
-  Comment, DesignSystem, Edl, ExportOptions, JobState, Project, ProjectBundle, PublicSettings, Recipe, Settings
+  Comment, DesignSystem, Edl, ExportOptions, Illustration, JobState, Project, ProjectBundle, PublicSettings, Recipe, Settings
 } from '../../shared/types'
 
 const c = <T,>(ch: string, ...a: unknown[]) => window.rushcut.call<T>(ch, ...a)
@@ -21,6 +21,8 @@ export const api = {
   saveEdl: (id: string, e: Edl) => c<void>('project:saveEdl', id, e),
   saveComments: (id: string, cm: Comment[]) => c<void>('project:saveComments', id, cm),
   saveFrame: (id: string, cid: string, dataUrl: string) => c<string>('project:saveFrame', id, cid, dataUrl),
+  addIllustrations: (id: string, files?: string[]) => c<Illustration[] | null>('assets:add', id, files),
+  removeIllustration: (id: string, file: string) => c<Illustration[]>('assets:remove', id, file),
   transcribe: (id: string) => c<void>('project:transcribe', id),
   resumeImport: (id: string) => c<void>('project:resumeImport', id),
   generate: (id: string, base: string | null, ds: string) => c<string>('ai:generate', id, base, ds),

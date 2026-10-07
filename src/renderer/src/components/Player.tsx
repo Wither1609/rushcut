@@ -260,7 +260,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
           onLoadedData={() => setMediaError(false)}
         />
         <div style={{ position: 'absolute', left: 0, top: 0, width: designW, height: 1080, transform: `scale(${box.h / 1080})`, transformOrigin: '0 0', pointerEvents: 'none' }}>
-          <Overlay edl={edl} chunks={p.chunks} ds={p.ds} width={designW} />
+          <Overlay edl={edl} chunks={p.chunks} ds={p.ds} width={designW} projectId={project.id} />
         </div>
         <canvas
           ref={ink}
@@ -287,8 +287,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
             else redrawInk()
           }}
         />
-        <span className="badge">{edl.version} · {project.ready.proxy ? 'PROXY 540p' : 'SOURCE'}</span>
-        <span className="badge r">{p.ds.name}</span>
+        <span className="badge">{edl.version}</span>
         {mediaError && (
           <div className="notice">
             {project.ready.proxy ? 'Lecture impossible.' : 'Ce format ne se lit pas directement. Le proxy est en préparation, la vidéo apparaîtra dès qu’il est prêt.'}
@@ -330,10 +329,10 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(p, ref) {
 })
 
 /** The only part of the screen that re-renders every frame during playback. */
-function Overlay({ edl, chunks, ds, width }: { edl: Edl; chunks: CaptionChunk[]; ds: DesignSystem; width: number }) {
+function Overlay({ edl, chunks, ds, width, projectId }: { edl: Edl; chunks: CaptionChunk[]; ds: DesignSystem; width: number; projectId: string }) {
   const t = useSyncExternalStore((cb) => clock.subscribe(cb), () => clock.t)
   const gfx = useMemo(() => edl.gfx, [edl.gfx])
-  return <GfxLayer t={t} gfx={gfx} chunks={edl.captions.enabled ? chunks : []} ds={ds} uppercase={edl.captions.uppercase} width={width} />
+  return <GfxLayer t={t} gfx={gfx} chunks={edl.captions.enabled ? chunks : []} ds={ds} uppercase={edl.captions.uppercase} width={width} captionStyle={edl.captions.style} projectId={projectId} />
 }
 
 export function Timecode({ duration }: { duration: number }) {

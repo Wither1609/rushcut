@@ -4,7 +4,7 @@ import path from 'path'
 import { pathToFileURL } from 'url'
 import { Readable } from 'stream'
 import {
-  createProject, deleteProject, listProjects, loadBundle, loadProject, nextVersionName, projectDir, root, runImportPipeline, saveComments,
+  addIllustrations, createProject, deleteProject, removeIllustration, listProjects, loadBundle, loadProject, nextVersionName, projectDir, root, runImportPipeline, saveComments,
   saveCommentFrame, saveEdl, transcribeProject, updateProject
 } from './projects'
 import { deleteDesignSystem, getSettings, listDesignSystems, publicSettings, saveDesignSystem, setSettings } from './store'
@@ -18,7 +18,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'rushcut', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } }
 ])
 
-const MIME: Record<string, string> = { '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.jpg': 'image/jpeg', '.png': 'image/png', '.mp3': 'audio/mpeg', '.json': 'application/json' }
+const MIME: Record<string, string> = { '.webp': 'image/webp', '.gif': 'image/gif', '.jpeg': 'image/jpeg', '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.jpg': 'image/jpeg', '.png': 'image/png', '.mp3': 'audio/mpeg', '.json': 'application/json' }
 
 /** rushcut://p/<projectId>/<file> serves project files, with byte ranges so the video can seek. */
 function registerProtocol() {
@@ -124,6 +124,22 @@ function registerIpc() {
   handle('project:saveEdl', (id: string, edl: Edl) => saveEdl(id, edl))
   handle('project:saveComments', (id: string, c: Comment[]) => saveComments(id, c))
   handle('project:saveFrame', (id: string, cid: string, dataUrl: string) => saveCommentFrame(id, cid, dataUrl))
+  handle('assets:add', async (id: string, files?: string[]) => {
+    let list = files
+    if (!list) {
+      const r = await dialog.showOpenDialog({ title: 'Images d’illustration', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }] })
+      if (r.canceled) return null
+      list = r.filePaths
+    }
+    const out = addIllustrations(id, list)
+    notifyProject(id)
+    return out
+  })
+  handle('assets:remove', (id: string, file: string) => {
+    const out = removeIllustration(id, file)
+    notifyProject(id)
+    return out
+  })
   handle('project:transcribe', (id: string) => transcribeProject(id))
   handle('project:resumeImport', (id: string) => runImportPipeline(id))
 
@@ -157,7 +173,7 @@ function registerIpc() {
     return recipe
   })
 
-  handle('export:start', (id: string, opts: ExportOptions) => enqueue(id, `Export ${opts.version} ${opts.height}p`, (ctx) => exportVersion(id, opts, ctx)))
+  handle('export:start', (id: string, opts: ExportOptions) => enqueue(id, `Export ${opts.version} ${opts.aspect === '9:16' ? `vertical ${opts.height}×${Math.round((opts.height * 16) / 9)}` : `${opts.height}p`}`, (ctx) => exportVersion(id, opts, ctx)))
   handle('shell:reveal', (p: string) => shell.showItemInFolder(p))
   handle('shell:open', (url: string) => (/^https:\/\//.test(url) ? shell.openExternal(url) : undefined))
   handle('jobs:list', () => listJobs())
