@@ -106,8 +106,17 @@ interface CliResult {
   api_error_status?: number | null
 }
 
+/** A long V1 at high effort takes a few minutes; past this, the CLI is stuck (network, permission prompt…). */
+const CLI_TIMEOUT_MS = 20 * 60_000
+
 /** One request through `claude -p`: same system prompt, content blocks (images included) and JSON schema as the API path. */
-export async function callClaudeCode(label: string, system: string, content: BetaContentBlockParam[], schema: Record<string, unknown>): Promise<unknown> {
+export async function callClaudeCode(
+  label: string,
+  system: string,
+  content: BetaContentBlockParam[],
+  schema: Record<string, unknown>,
+  signal?: AbortSignal
+): Promise<unknown> {
   const bin = await findClaude()
   if (!bin) throw new Error('Claude Code est introuvable. Installe-le, connecte-toi avec ton abonnement (claude auth login), puis réessaie. Le chemin peut être indiqué dans Réglages.')
   const s = getSettings()
@@ -134,17 +143,29 @@ export async function callClaudeCode(label: string, system: string, content: Bet
   const input = JSON.stringify({ type: 'user', message: { role: 'user', content: blocks } }) + '\n'
 
   const out = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error('aborted'))
     // Empty working directory, so no project CLAUDE.md is picked up.
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'rushcut-claude-'))
     const child = spawn(bin, args, { cwd, env: cliEnv(bin), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
+    let timedOut = false
+    const kill = () => child.kill()
+    const timer = setTimeout(() => {
+      timedOut = true
+      kill()
+    }, CLI_TIMEOUT_MS)
+    signal?.addEventListener('abort', kill)
     child.stdout.setEncoding('utf8').on('data', (d: string) => (stdout += d))
     child.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d))
     child.on('error', (e) => reject(new Error(`Impossible de lancer Claude Code : ${e.message}`)))
     child.on('close', (code) => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', kill)
       fs.rmSync(cwd, { recursive: true, force: true })
-      resolve({ code: code ?? 1, stdout, stderr })
+      if (timedOut) reject(new Error(`Claude Code n’a pas répondu en ${CLI_TIMEOUT_MS / 60_000} minutes (${label}). Réessaie, ou baisse l’effort dans Réglages.`))
+      else if (signal?.aborted) reject(new Error('aborted'))
+      else resolve({ code: code ?? 1, stdout, stderr })
     })
     child.stdin.end(input)
   })

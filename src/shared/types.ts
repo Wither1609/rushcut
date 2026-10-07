@@ -127,6 +127,9 @@ export interface MediaInfo {
   hasAudio: boolean
 }
 
+/** Error message of a job the user cancelled: shown as a plain notice, not as a failure. */
+export const CANCELLED = 'Tâche annulée'
+
 export interface JobState {
   id: string
   label: string

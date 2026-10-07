@@ -29,6 +29,7 @@ export interface RunOptions {
 
 export function run(bin: string, args: string[], opts: RunOptions = {}): Promise<{ stdout: Buffer; stderr: string }> {
   return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) return reject(new Error('aborted'))
     const withProgress = bin === FFMPEG && opts.duration && !opts.collectStdout && !opts.onStdout
     const fullArgs = bin === FFMPEG ? ['-hide_banner', '-y', ...(withProgress ? ['-progress', 'pipe:1', '-nostats'] : []), ...args] : args
     const child = spawn(bin, fullArgs, { windowsHide: true })

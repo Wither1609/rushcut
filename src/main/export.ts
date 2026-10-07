@@ -5,7 +5,7 @@ import path from 'path'
 import { detectEncoder, FFMPEG, run, runDecoding, videoEncoderArgs } from './ffmpeg'
 import { loadBundle } from './projects'
 import { getDesignSystem } from './store'
-import type { JobCtx } from './jobs'
+import { throwIfCancelled, type JobCtx } from './jobs'
 import { editedDuration } from '../shared/edl'
 import { buildChunks, chunksToOut, gfxToOut, sampleTimes } from '../shared/overlay'
 import { buildSrt } from '../shared/srt'
@@ -81,12 +81,19 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
     const af = `aresample=48000,afade=t=in:d=${fade},afade=t=out:st=${(len - fade).toFixed(3)}:d=${fade}`
     const audioIn = media.hasAudio ? [] : ['-f', 'lavfi', '-t', len.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo']
     const tmp = file + '.part.mkv'
-    await runDecoding([
-      '-ss', p.in.toFixed(3), '-t', len.toFixed(3), '-i', media.path, ...audioIn,
-      '-map', '0:v:0', '-map', media.hasAudio ? '0:a:0' : '1:a:0',
-      '-vf', vf, '-af', af, ...pieceEnc, '-c:a', 'pcm_s16le', '-ac', '2', '-t', len.toFixed(3), tmp
-    ])
-    fs.renameSync(tmp, file)
+    try {
+      await runDecoding(
+        [
+          '-ss', p.in.toFixed(3), '-t', len.toFixed(3), '-i', media.path, ...audioIn,
+          '-map', '0:v:0', '-map', media.hasAudio ? '0:a:0' : '1:a:0',
+          '-vf', vf, '-af', af, ...pieceEnc, '-c:a', 'pcm_s16le', '-ac', '2', '-t', len.toFixed(3), tmp
+        ],
+        { signal: ctx.signal }
+      )
+      fs.renameSync(tmp, file)
+    } finally {
+      fs.rmSync(tmp, { force: true })
+    }
   }
   // Hardware encoders run several sessions side by side; libx264 already uses half the cores on its own.
   const workers = (await detectEncoder()) === 'libx264' ? 1 : 3
@@ -121,7 +128,7 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
     if (!fs.existsSync(overlayTxt)) {
       const times = sampleTimes(gfxOut, chunks, total, FPS)
       fs.mkdirSync(odir, { recursive: true })
-      await renderOverlay(payload, times, odir, (p) => ctx.progress(0.5 + p * 0.25, `Motion design ${Math.round(p * times.length)}/${times.length} images`))
+      await renderOverlay(payload, times, odir, (p) => ctx.progress(0.5 + p * 0.25, `Motion design ${Math.round(p * times.length)}/${times.length} images`), ctx.signal)
       const lines: string[] = []
       times.forEach((t, i) => {
         const next = i + 1 < times.length ? times[i + 1] : total
@@ -146,11 +153,18 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
   } else args.push('-map', '0:v')
   args.push('-map', '0:a', ...finalEnc, '-r', String(FPS), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out)
   ctx.progress(0.75, reused ? `Assemblage (${reused}/${list.length} segments en cache)` : 'Assemblage')
-  await run(FFMPEG, args, { duration: total, onProgress: (p) => ctx.progress(0.75 + p * 0.25) })
+  try {
+    await run(FFMPEG, args, { duration: total, onProgress: (p) => ctx.progress(0.75 + p * 0.25), signal: ctx.signal })
+  } catch (e) {
+    // A half-written MP4 next to the good ones would be mistaken for a finished export.
+    fs.rmSync(out, { force: true })
+    if (opts.srt) fs.rmSync(out.replace(/\.mp4$/, '.srt'), { force: true })
+    throw e
+  }
   return out
 }
 
-async function renderOverlay(payload: unknown, times: number[], odir: string, onProgress: (p: number) => void) {
+async function renderOverlay(payload: unknown, times: number[], odir: string, onProgress: (p: number) => void, signal: AbortSignal) {
   const { W, H } = payload as { W: number; H: number }
   const win = new BrowserWindow({
     show: false,
@@ -168,6 +182,7 @@ async function renderOverlay(payload: unknown, times: number[], odir: string, on
     await win.loadURL(rendererUrl + '#render')
     await win.webContents.executeJavaScript(`window.__rcSetup(${JSON.stringify(payload)})`)
     for (const [i, t] of times.entries()) {
+      throwIfCancelled(signal)
       await win.webContents.executeJavaScript(`window.__rcSeek(${t})`)
       let img = await win.webContents.capturePage()
       const s = img.getSize()

@@ -3,17 +3,17 @@ import path from 'path'
 import crypto from 'crypto'
 import { getSettings } from './store'
 import { FFMPEG, fileExists, probe, run, runDecoding, THREADS, videoEncoderArgs } from './ffmpeg'
-import { enqueue, notifyProject, type JobCtx } from './jobs'
+import { enqueue, notifyProject, throwIfCancelled, type JobCtx } from './jobs'
 import { transcribe } from './elevenlabs'
 import { emptyEdl } from '../shared/edl'
 import { PEAKS_PER_SEC, type Comment, type Edl, type Illustration, type Project, type ProjectBundle, type Range, type Word } from '../shared/types'
 
 export const root = () => getSettings().projectsDir
 
+/** Project ids are a single folder name (see createProject): anything else could point outside the projects folder. */
 export function projectDir(id: string) {
-  const dir = path.join(root(), id)
-  if (!path.resolve(dir).startsWith(path.resolve(root()))) throw new Error('Projet invalide')
-  return dir
+  if (typeof id !== 'string' || !/^[\w-]+$/.test(id)) throw new Error('Projet invalide')
+  return path.join(root(), id)
 }
 
 const readJson = <T>(p: string, fallback: T): T => {
@@ -193,12 +193,19 @@ export async function runImportPipeline(id: string) {
     steps.push(
       enqueue(id, 'Proxy 540p', async (ctx) => {
         const enc = await videoEncoderArgs(2500, 26)
-        const out = path.join(dir, 'proxy.mp4')
-        await runDecoding(
-          ['-i', src, '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'scale=-2:540,format=yuv420p', '-r', String(Math.min(30, Math.round(p.media.fps) || 30)),
-            ...enc, '-g', '15', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', out],
-          { duration: dur, onProgress: (x) => ctx.progress(x) }
-        )
+        // Written aside and renamed once complete: an interrupted encode must never pass for a proxy.
+        const out = path.join(dir, 'proxy.part.mp4')
+        try {
+          await runDecoding(
+            ['-i', src, '-map', '0:v:0', '-map', '0:a:0?', '-vf', 'scale=-2:540,format=yuv420p', '-r', String(Math.min(30, Math.round(p.media.fps) || 30)),
+              ...enc, '-g', '15', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-movflags', '+faststart', out],
+            { duration: dur, onProgress: (x) => ctx.progress(x), signal: ctx.signal }
+          )
+          throwIfCancelled(ctx.signal)
+          fs.renameSync(out, path.join(dir, 'proxy.mp4'))
+        } finally {
+          fs.rmSync(out, { force: true })
+        }
         markReady(id, 'proxy')
       })
     )
@@ -206,7 +213,7 @@ export async function runImportPipeline(id: string) {
   if (!p.ready.sprite)
     steps.push(
       enqueue(id, 'Vignettes', async (ctx) => {
-        if (!fileExists(path.join(dir, 'proxy.mp4'))) return
+        if (!loadProject(id).ready.proxy) return
         const every = Math.max(1, Math.ceil(dur / 240))
         const count = Math.max(1, Math.ceil(dur / every))
         const cols = 16
@@ -217,7 +224,7 @@ export async function runImportPipeline(id: string) {
           FFMPEG,
           ['-skip_frame', 'nokey', '-i', path.join(dir, 'proxy.mp4'), '-an', '-vf', `fps=1/${every},scale=${w}:${h},tile=${cols}x${rows}`,
             '-frames:v', '1', '-q:v', '5', '-threads', THREADS, path.join(dir, 'sprite.jpg')],
-          { duration: dur, onProgress: ctx.progress }
+          { duration: dur, onProgress: ctx.progress, signal: ctx.signal }
         )
         const pr = loadProject(id)
         pr.sprite = { file: 'sprite.jpg', every, cols, w, h, count }
@@ -242,7 +249,8 @@ function extractAudio(id: string): Promise<string> {
       const tmp = path.join(p.dir, 'audio.part.mp3')
       await run(FFMPEG, ['-i', p.media.path, '-map', '0:a:0', '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'libmp3lame', '-b:a', '48k', tmp], {
         duration: p.media.duration,
-        onProgress: ctx.progress
+        onProgress: ctx.progress,
+        signal: ctx.signal
       })
       fs.renameSync(tmp, audio)
       return audio
@@ -293,7 +301,8 @@ async function analyzeAudio(id: string, ctx: JobCtx) {
           sil.push({ in: start, out: Number(e[1]) })
           start = null
         }
-      }
+      },
+      signal: ctx.signal
     }
   )
   if (start !== null) sil.push({ in: start, out: dur })
@@ -308,8 +317,8 @@ export async function transcribeProject(id: string) {
   await enqueue(
     id,
     'Transcription ElevenLabs',
-    async () => {
-      const words = await transcribe(audio)
+    async (ctx) => {
+      const words = await transcribe(audio, ctx.signal)
       writeJson(path.join(loadProject(id).dir, 'words.json'), words)
       markReady(id, 'transcript')
     },

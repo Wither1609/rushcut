@@ -14,11 +14,18 @@ import { FONT_CHOICES, type CaptionStyle, type Comment, type DesignSystem, type 
 // Models that accept server-side refusal fallbacks (`fallbacks: "default"`).
 const FALLBACK_MODELS = ['claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1', 'claude-sonnet-5-5']
 
-async function callJson<T>(label: string, system: string, content: BetaContentBlockParam[], schema: Record<string, unknown>, parser: z.ZodType<T>): Promise<T> {
+async function callJson<T>(
+  label: string,
+  system: string,
+  content: BetaContentBlockParam[],
+  schema: Record<string, unknown>,
+  parser: z.ZodType<T>,
+  signal?: AbortSignal
+): Promise<T> {
   const s = getSettings()
   if (s.claudeAuth === 'subscription') {
     try {
-      return parser.parse(await callClaudeCode(label, system, content, schema))
+      return parser.parse(await callClaudeCode(label, system, content, schema, signal))
     } catch (e) {
       if (e instanceof z.ZodError) throw new Error(`Réponse de Claude illisible (${label}).`)
       throw e
@@ -28,15 +35,18 @@ async function callJson<T>(label: string, system: string, content: BetaContentBl
   const client = new Anthropic({ apiKey: s.anthropicKey })
   const fallback = FALLBACK_MODELS.includes(s.claudeModel)
   try {
-    const stream = client.beta.messages.stream({
-      model: s.claudeModel,
-      max_tokens: 64000,
-      ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
-      thinking: { type: 'adaptive' },
-      output_config: { effort: s.effort, format: { type: 'json_schema', schema } },
-      system,
-      messages: [{ role: 'user', content }]
-    })
+    const stream = client.beta.messages.stream(
+      {
+        model: s.claudeModel,
+        max_tokens: 64000,
+        ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
+        thinking: { type: 'adaptive' },
+        output_config: { effort: s.effort, format: { type: 'json_schema', schema } },
+        system,
+        messages: [{ role: 'user', content }]
+      },
+      { signal }
+    )
     const msg = await stream.finalMessage()
     if (msg.stop_reason === 'refusal') throw new Error(`Claude a refusé la demande (${label}).`)
     if (msg.stop_reason === 'max_tokens') throw new Error(`Réponse de Claude tronquée (${label}). Réessaie avec un effort plus bas.`)
@@ -239,7 +249,7 @@ function toEdl(d: EdlDraft, b: ProjectBundle, version: string, parent: string | 
   }
 }
 
-export async function generateFirstCut(b: ProjectBundle, version: string, dsId: string): Promise<Edl> {
+export async function generateFirstCut(b: ProjectBundle, version: string, dsId: string, signal?: AbortSignal): Promise<Edl> {
   if (!b.words.length) throw new Error('Il faut un transcript avant de générer la V1 (ajoute ta clé ElevenLabs).')
   const ds = getDesignSystem(dsId)
   const draft = await callJson(
@@ -252,7 +262,8 @@ export async function generateFirstCut(b: ProjectBundle, version: string, dsId: 
       { type: 'text', text: 'Produce the first cut (V1) of this recording.' }
     ],
     EDL_SCHEMA,
-    EdlDraft
+    EdlDraft,
+    signal
   )
   return toEdl(draft, b, version, null, dsId)
 }
@@ -327,7 +338,7 @@ ops (applied in order):
 ref is the id shown in the current EDL (graphics: their id; zooms: z0, z1…; chapters: c0, c1…). Times are source seconds.
 A comment about something the EDL cannot do (colour grading, sound, re-recording…) gets no op: leave it out of resolves and explain it in the summary.`
 
-export async function applyComments(b: ProjectBundle, base: Edl, open: Comment[], version: string, dsId: string): Promise<Edl> {
+export async function applyComments(b: ProjectBundle, base: Edl, open: Comment[], version: string, dsId: string, signal?: AbortSignal): Promise<Edl> {
   const ds = getDesignSystem(dsId)
   const content: BetaContentBlockParam[] = [
     { type: 'text', text: transcriptBlock(b), cache_control: { type: 'ephemeral' } },
@@ -360,7 +371,7 @@ export async function applyComments(b: ProjectBundle, base: Edl, open: Comment[]
     type: 'text',
     text: `Produce ${version}: return the ops that apply every review comment above to the current EDL (${base.version}). Change only what the comments ask for, plus what those changes require. List the comment ids you addressed in resolves.`
   })
-  const draft = await callJson(version, `${EDITOR_SYSTEM}\n\n${REVISE_INSTRUCTIONS}`, content, OPS_SCHEMA, OpsDraft)
+  const draft = await callJson(version, `${EDITOR_SYSTEM}\n\n${REVISE_INSTRUCTIONS}`, content, OPS_SCHEMA, OpsDraft, signal)
   const ops = draft.ops as EdlOp[]
   const r = applyOps(base, ops, b.words, b.project.media.duration, (b.project.illustrations ?? []).map((i) => i.file))
   const ids = new Set(open.map((c) => c.id))
@@ -400,7 +411,7 @@ const RecipeDraft = z.object({
   sound: z.string()
 })
 
-export async function analyzeReference(source: string, duration: number, shots: number[], frames: { t: number; jpg: Buffer }[]): Promise<Recipe> {
+export async function analyzeReference(source: string, duration: number, shots: number[], frames: { t: number; jpg: Buffer }[], signal?: AbortSignal): Promise<Recipe> {
   const avg = shots.length ? shots.reduce((a, s) => a + s, 0) / shots.length : duration
   const content: BetaContentBlockParam[] = [
     {
@@ -421,7 +432,8 @@ export async function analyzeReference(source: string, duration: number, shots: 
     'You are a senior video editor who reverse-engineers editing styles from reference videos.',
     content,
     RECIPE_SCHEMA,
-    RecipeDraft
+    RecipeDraft,
+    signal
   )
   return { ...d, source, avgShot: avg, shots }
 }
@@ -442,7 +454,7 @@ const DS_SCHEMA = obj({
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/)
 const DsDraft = z.object({ name: z.string(), note: z.string(), bg: hex, fg: hex, accent: hex, font: z.string(), weight: z.number(), radius: z.number() })
 
-export async function designSystemFromImage(file: string): Promise<DesignSystem> {
+export async function designSystemFromImage(file: string, signal?: AbortSignal): Promise<DesignSystem> {
   const ext = path.extname(file).toLowerCase()
   const media_type = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
   const d = await callJson(
@@ -456,7 +468,8 @@ export async function designSystemFromImage(file: string): Promise<DesignSystem>
       }
     ],
     DS_SCHEMA,
-    DsDraft
+    DsDraft,
+    signal
   )
   return {
     id: `ds-${Date.now().toString(36)}`,

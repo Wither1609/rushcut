@@ -31,7 +31,8 @@ export const api = {
   exportVideo: (id: string, o: ExportOptions) => c<string>('export:start', id, o),
   reveal: (p: string) => c<void>('shell:reveal', p),
   jobs: () => c<JobState[]>('jobs:list'),
-  dismissJob: (id: string) => c<void>('jobs:dismiss', id)
+  dismissJob: (id: string) => c<void>('jobs:dismiss', id),
+  cancelJob: (id: string) => c<void>('jobs:cancel', id)
 }
 
 export const mediaUrl = (projectId: string, file: string, bust?: string | number) =>

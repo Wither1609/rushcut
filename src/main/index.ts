@@ -9,7 +9,7 @@ import {
 } from './projects'
 import { claudeCodeStatus } from './claudeCode'
 import { deleteDesignSystem, getSettings, listDesignSystems, publicSettings, saveDesignSystem, setSettings } from './store'
-import { dismissJob, enqueue, listJobs, notifyProject } from './jobs'
+import { cancelJob, dismissJob, enqueue, listJobs, notifyProject } from './jobs'
 import { applyComments, designSystemFromImage, generateFirstCut } from './claude'
 import { recipeFromReference } from './reference'
 import { exportVersion, setRendererUrl } from './export'
@@ -109,7 +109,7 @@ function registerIpc() {
   handle('ds:fromImage', async () => {
     const f = await pickFile('Capture, deck ou site', ['png', 'jpg', 'jpeg', 'webp'])
     if (!f) return null
-    const ds = await enqueue('global', 'Claude lit le design system', () => designSystemFromImage(f), true)
+    const ds = await enqueue('global', 'Claude lit le design system', (ctx) => designSystemFromImage(f, ctx.signal), true)
     saveDesignSystem(ds)
     return ds
   })
@@ -155,7 +155,7 @@ function registerIpc() {
     const edl = await enqueue(
       id,
       firstCut ? `Claude monte la ${version}` : `Claude applique ${open.length} commentaire${open.length > 1 ? 's' : ''} → ${version}`,
-      () => (firstCut ? generateFirstCut(b, version, dsId) : applyComments(b, baseEdl!, open, version, dsId)),
+      (ctx) => (firstCut ? generateFirstCut(b, version, dsId, ctx.signal) : applyComments(b, baseEdl!, open, version, dsId, ctx.signal)),
       true
     )
     if (baseEdl && baseEdl.status === 'review') saveEdl(id, { ...baseEdl, status: 'archived' })
@@ -169,7 +169,7 @@ function registerIpc() {
   handle('ai:reference', async (id: string) => {
     const f = await pickFile('Vidéo d’exemple', VIDEO_EXT)
     if (!f) return null
-    const recipe = await enqueue(id, 'Analyse de la vidéo d’exemple', (ctx) => recipeFromReference(f, ctx.progress))
+    const recipe = await enqueue(id, 'Analyse de la vidéo d’exemple', (ctx) => recipeFromReference(f, ctx.progress, ctx.signal))
     updateProject(id, { recipe })
     notifyProject(id)
     return recipe
@@ -180,6 +180,7 @@ function registerIpc() {
   handle('shell:open', (url: string) => (/^https:\/\//.test(url) ? shell.openExternal(url) : undefined))
   handle('jobs:list', () => listJobs())
   handle('jobs:dismiss', (jobId: string) => dismissJob(jobId))
+  handle('jobs:cancel', (jobId: string) => cancelJob(jobId))
   handle('app:info', () => ({ root: root(), platform: process.platform, version: app.getVersion() }))
 }
 
