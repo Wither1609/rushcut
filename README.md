@@ -84,12 +84,19 @@ Quatre styles sont fournis. **+ Nouveau** crée un design system à partir d'une
 | P | Pin au timecode |
 | D | Dessiner sur l'image |
 | C | Couper à la tête de lecture |
-| Suppr | Supprimer le plan, le graphisme ou les mots sélectionnés. Sur une zone hachurée, restaure le passage |
+| Z | Ajouter un zoom à la tête de lecture |
+| M | Ajouter un chapitre à la tête de lecture |
+| Suppr | Supprimer le plan, le graphisme, le zoom, le chapitre ou les mots sélectionnés. Sur une zone hachurée, restaure le passage |
 | H | Lecture montée ou lecture brute |
 | ⌘/Ctrl+Z, ⇧⌘Z | Annuler, rétablir |
 | ⌘/Ctrl + molette | Zoom de la timeline |
 
 Dans le transcript, fais glisser la souris sur des mots puis appuie sur **Suppr** : ils sont coupés de la vidéo. Refais la même chose sur des mots barrés pour les restaurer.
+
+Sur la timeline :
+- Glisse le bord d'un plan pour le raccourcir ou le rallonger. Le lecteur montre l'image du bord pendant le geste. Entre deux plans collés (après **C**), le point de montage se déplace sans rien couper.
+- Glisse un graphisme ou un zoom pour le déplacer, et ses bords pour changer sa durée. Glisse un chapitre pour le déplacer. Un clic ouvre son panneau : texte, force du zoom, titre du chapitre.
+- Les bords s'aimantent à la tête de lecture, aux autres coupes et aux mots. Maintiens **Alt** pour placer librement.
 
 ## Fichiers d'un projet
 

@@ -1,5 +1,5 @@
 import { mediaUrl } from '../api'
-import type { GfxComp, GfxItem, Illustration } from '../../../shared/types'
+import type { Chapter, GfxComp, GfxItem, Illustration, Zoom } from '../../../shared/types'
 
 const COMPS: { id: GfxComp; label: string }[] = [
   { id: 'title', label: 'Titre' },
@@ -100,6 +100,64 @@ export function Inspector({ g, projectId, illustrations, onChange, onDelete, onC
           )}
         </>
       )}
+    </div>
+  )
+}
+
+interface ItemProps<T> {
+  item: T
+  duration: number
+  onChange: (item: T) => void
+  onDelete: () => void
+  onClose: () => void
+}
+
+const Head = ({ label, onDelete, onClose }: { label: string; onDelete: () => void; onClose: () => void }) => (
+  <div className="row">
+    <span className="eyebrow">{label}</span>
+    <div className="spacer" />
+    <button className="btn sm danger" onClick={onDelete}>Supprimer</button>
+    <button className="btn sm ghost" onClick={onClose}>Fermer</button>
+  </div>
+)
+
+/** Punch-in zoom: strength and timing. Same bounds as the zooms Claude writes. */
+export function ZoomInspector({ item: z, duration, onChange, onDelete, onClose }: ItemProps<Zoom>) {
+  return (
+    <div className="inspector">
+      <Head label="Zoom" onDelete={onDelete} onClose={onClose} />
+      <label className="field">
+        <span>Force · {Math.round(z.scale * 100)} %</span>
+        <input id="zoom-scale" type="range" min={1.02} max={1.35} step={0.01} value={z.scale} onChange={(e) => onChange({ ...z, scale: Number(e.target.value) })} />
+      </label>
+      <div className="grid2">
+        <label className="field">
+          <span>Début (s)</span>
+          <input id="zoom-t" className="input mono" type="number" step="0.1" value={z.t.toFixed(2)} onChange={(e) => onChange({ ...z, t: Math.min(duration - z.d, Math.max(0, Number(e.target.value))) })} />
+        </label>
+        <label className="field">
+          <span>Durée (s)</span>
+          <input id="zoom-d" className="input mono" type="number" step="0.1" min="0.3" max="8" value={z.d.toFixed(2)} onChange={(e) => onChange({ ...z, d: Math.min(8, Math.max(0.3, Number(e.target.value))) })} />
+        </label>
+      </div>
+      <p className="muted">Glisse le zoom sur la timeline pour le déplacer, ou ses bords pour changer sa durée.</p>
+    </div>
+  )
+}
+
+/** Chapter marker: title and position. */
+export function ChapterInspector({ item: c, duration, onChange, onDelete, onClose }: ItemProps<Chapter>) {
+  return (
+    <div className="inspector">
+      <Head label="Chapitre" onDelete={onDelete} onClose={onClose} />
+      <label className="field">
+        <span>Titre</span>
+        <input id="chapter-title" className="input" autoFocus value={c.title} onChange={(e) => onChange({ ...c, title: e.target.value })} />
+      </label>
+      <label className="field">
+        <span>Début (s)</span>
+        <input id="chapter-t" className="input mono" type="number" step="0.1" value={c.t.toFixed(2)} onChange={(e) => onChange({ ...c, t: Math.min(duration - 0.01, Math.max(0, Number(e.target.value))) })} />
+      </label>
     </div>
   )
 }

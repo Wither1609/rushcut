@@ -6,14 +6,14 @@ import { Player, Timecode, type PlayerHandle } from './components/Player'
 import { Transcript } from './components/Transcript'
 import { Comments, type Draft } from './components/Comments'
 import { Timeline, type Selection } from './components/Timeline'
-import { Inspector } from './components/Inspector'
+import { ChapterInspector, Inspector, ZoomInspector } from './components/Inspector'
 import { GenerateModal } from './components/GenerateModal'
 import { ExportModal } from './components/ExportModal'
 import { Onboarding } from './components/Onboarding'
 import { StylePanel } from './components/StylePanel'
 import { cutRange, editedDuration, keepIndexAt, restoreRange, shortTime, splitAt, srcToOut } from '../../shared/edl'
 import { buildChunks } from '../../shared/overlay'
-import { BUILTIN_DS, type Comment, type DesignSystem, type Edl, type ExportOptions, type JobState, type ProjectBundle, type Shape } from '../../shared/types'
+import { BUILTIN_DS, type Chapter, type Comment, type DesignSystem, type Edl, type ExportOptions, type JobState, type ProjectBundle, type Shape, type Zoom } from '../../shared/types'
 
 interface Props {
   projectId: string
@@ -155,6 +155,10 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
       commit({ ...edl, keep: restoreRange(edl.keep, selection.a, selection.b, D) })
     } else if (selection.kind === 'gfx') {
       commit({ ...edl, gfx: edl.gfx.filter((g) => g.id !== selection.id) })
+    } else if (selection.kind === 'zoom') {
+      commit({ ...edl, zooms: edl.zooms.filter((_, i) => i !== selection.index) })
+    } else if (selection.kind === 'chapter') {
+      commit({ ...edl, chapters: edl.chapters.filter((_, i) => i !== selection.index) })
     } else if (selection.kind === 'words') {
       const [i0, i1] = [Math.min(selection.a, selection.b), Math.max(selection.a, selection.b)]
       const w = b.words
@@ -170,6 +174,41 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
     }
     setSelection(null)
   }, [b, edl, selection, commit])
+
+  // Zooms and chapters are referred to by index: keep them in time order and follow the edited one.
+  const putZoom = useCallback(
+    (z: Zoom, index?: number) => {
+      if (!edl) return
+      const list = index === undefined ? [...edl.zooms, z] : edl.zooms.map((x, i) => (i === index ? z : x))
+      const sorted = [...list].sort((a, b) => a.t - b.t)
+      commit({ ...edl, zooms: sorted })
+      setSelection({ kind: 'zoom', index: sorted.indexOf(z) })
+    },
+    [edl, commit]
+  )
+
+  const putChapter = useCallback(
+    (c: Chapter, index?: number) => {
+      if (!edl) return
+      const list = index === undefined ? [...edl.chapters, c] : edl.chapters.map((x, i) => (i === index ? c : x))
+      const sorted = [...list].sort((a, b) => a.t - b.t)
+      commit({ ...edl, chapters: sorted })
+      setSelection({ kind: 'chapter', index: sorted.indexOf(c) })
+    },
+    [edl, commit]
+  )
+
+  const addZoom = useCallback(() => {
+    if (!b) return
+    const t = clock.t
+    const d = Math.min(2, b.project.media.duration - t)
+    if (d >= 0.3) putZoom({ t, d, scale: 1.12 })
+  }, [b, putZoom])
+
+  const addChapter = useCallback(() => {
+    setTab('transcript')
+    putChapter({ t: clock.t, title: 'Nouvelle partie' })
+  }, [putChapter])
 
   const cutSilences = () => {
     if (!b || !edl) return
@@ -274,12 +313,14 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
         setSelection(null)
         setDraft(null)
       } else if (k === 'h') setSkipCuts((s) => !s)
+      else if (k === 'z') addZoom()
+      else if (k === 'm') addChapter()
       else if (k === '+' || k === '=') setPps((v) => Math.min(400, v * 1.4))
       else if (k === '-') setPps((v) => Math.max(0.5, v / 1.4))
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [modal, onboarding, drawMode, edl, commit, deleteSelection, doUndo, startPin])
+  }, [modal, onboarding, drawMode, edl, commit, deleteSelection, doUndo, startPin, addZoom, addChapter])
 
   if (!b || !edl) {
     return (
@@ -292,6 +333,8 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
   const p = b.project
   const nextName = 'V' + (Math.max(0, ...p.versions.map((v) => Number(v.slice(1)) || 0)) + 1)
   const selectedGfx = selection?.kind === 'gfx' ? edl.gfx.find((g) => g.id === selection.id) : undefined
+  const selectedZoom = selection?.kind === 'zoom' ? edl.zooms[selection.index] : undefined
+  const selectedChapter = selection?.kind === 'chapter' ? edl.chapters[selection.index] : undefined
   const outDur = editedDuration(edl.keep)
   const chapterEnds = edl.chapters.map((c, i) => srcToOut(edl.keep, edl.chapters[i + 1]?.t ?? p.media.duration) - srcToOut(edl.keep, c.t))
   const firstCut = version === 'V0'
@@ -450,6 +493,10 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
                 onDelete={deleteSelection}
                 onClose={() => setSelection(null)}
               />
+            ) : selectedZoom && selection?.kind === 'zoom' ? (
+              <ZoomInspector item={selectedZoom} duration={p.media.duration} onChange={(z) => putZoom(z, selection.index)} onDelete={deleteSelection} onClose={() => setSelection(null)} />
+            ) : selectedChapter && selection?.kind === 'chapter' ? (
+              <ChapterInspector item={selectedChapter} duration={p.media.duration} onChange={(c) => putChapter(c, selection.index)} onDelete={deleteSelection} onClose={() => setSelection(null)} />
             ) : (
               <>
                 <div className="tabs" role="tablist">
@@ -535,7 +582,11 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
             <span className="mono muted">
               {shortTime(p.media.duration)} <span className="arrow">→</span> <b>{shortTime(outDur)}</b>
             </span>
+            <span className="tp-sep" />
+            <button className="txt-btn" onClick={addZoom} title="Ajouter un zoom à la tête de lecture (Z)">+ Zoom</button>
+            <button className="txt-btn" onClick={addChapter} title="Ajouter un chapitre à la tête de lecture (M)">+ Chapitre</button>
             <div className="spacer" />
+            <span className="muted tl-hint">Glisse les bords d’un plan pour l’ajuster · Alt : sans magnétisme</span>
             <button className="icon-btn sm" onClick={() => setPps((v) => Math.max(0.5, v / 1.4))} aria-label="Dézoomer" title="Dézoomer (−)">−</button>
             <button className="txt-btn" onClick={() => setPps(Math.max(1, (window.innerWidth - 80) / p.media.duration))}>Ajuster</button>
             <button className="icon-btn sm" onClick={() => setPps((v) => Math.min(400, v * 1.4))} aria-label="Zoomer" title="Zoomer (+)">+</button>
@@ -546,12 +597,17 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
             gfx={edl.gfx}
             zooms={edl.zooms}
             chapters={edl.chapters}
+            words={b.words}
             comments={openComments}
             peaks={b.peaks}
             pps={pps}
             setPps={setPps}
             selection={selection}
             onSelect={setSelection}
+            onEdit={(patch, select) => {
+              commit({ ...edl, ...patch })
+              setSelection(select)
+            }}
           />
         </div>
       </div>

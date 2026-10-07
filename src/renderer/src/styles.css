@@ -428,12 +428,14 @@ label.field > span { font-size: 12px; color: var(--muted); }
 .tl-bar { display: flex; gap: 4px; align-items: center; padding: 4px 10px 4px 14px; border-bottom: 1px solid var(--line); font-size: 11px; }
 .tl-bar b { color: var(--fg); font-weight: 600; }
 .tl-bar .arrow { color: var(--dim); margin: 0 4px; }
+.tl-bar .tl-hint { font-size: 11px; margin-right: 8px; }
+@media (max-width: 1250px) { .tl-bar .tl-hint { display: none; } }
 .tl { flex: 1; display: grid; grid-template-columns: 64px minmax(0, 1fr); min-height: 0; }
 .tl-labels > div { height: var(--h); display: flex; align-items: center; padding-left: 12px; font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.1em; color: var(--muted); border-bottom: 1px solid var(--line); }
 .tl-scroll { overflow-x: auto; overflow-y: hidden; position: relative; }
 .lanes { position: relative; user-select: none; }
 .lane { position: relative; height: var(--h); border-bottom: 1px solid var(--line); }
-.r-ruler { --h: 24px; } .r-pins { --h: 22px; } .r-scene { --h: 22px; } .r-gfx { --h: 30px; } .r-v1 { --h: 54px; } .r-a1 { --h: 52px; }
+.r-ruler { --h: 24px; } .r-pins { --h: 22px; } .r-scene { --h: 22px; } .r-gfx { --h: 36px; } .r-v1 { --h: 54px; } .r-a1 { --h: 52px; }
 .r-ruler { cursor: ew-resize; }
 .tick { position: absolute; bottom: 0; width: 1px; background: var(--line-2); height: 6px; }
 .tick.big { height: 11px; background: var(--muted); }
@@ -444,10 +446,24 @@ label.field > span { font-size: 12px; color: var(--muted); }
 .clip.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .clip .lbl { position: absolute; left: 4px; top: 2px; font-family: var(--f-mono); font-size: 10px; color: var(--fg); text-shadow: 0 1px 2px #000; z-index: 1; white-space: nowrap; }
 .film { position: absolute; top: 0; bottom: 0; background-repeat: no-repeat; opacity: 0.85; }
-.gblock { position: absolute; top: 4px; bottom: 4px; border-radius: 4px; background: var(--gfx-soft); border: 1px solid var(--gfx); color: var(--gfx); font-size: 10px; padding: 2px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.gblock { position: absolute; top: 3px; bottom: 13px; border-radius: 4px; background: var(--gfx-soft); border: 1px solid var(--gfx); color: var(--gfx); font-size: 10px; padding: 2px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .gblock.sel { background: var(--gfx); color: #160f2b; }
-.zoomm { position: absolute; bottom: 2px; height: 4px; border-radius: 2px; background: var(--accent); opacity: 0.7; }
-.scene { position: absolute; top: 3px; font-family: var(--f-mono); font-size: 10px; color: var(--muted); border-left: 1px solid var(--muted); padding-left: 4px; white-space: nowrap; }
+.gblock { cursor: grab; } .gblock:active { cursor: grabbing; }
+.gblock .glbl { pointer-events: none; }
+.zoomm { position: absolute; bottom: 2px; height: 8px; border-radius: 3px; background: var(--accent); opacity: 0.6; cursor: grab; }
+.zoomm:hover { opacity: 0.85; }
+.zoomm.sel { opacity: 1; box-shadow: 0 0 0 1.5px var(--fg); }
+.scene { position: absolute; top: 3px; font-family: var(--f-mono); font-size: 10px; color: var(--muted); border-left: 1px solid var(--muted); padding: 0 4px; white-space: nowrap; cursor: grab; border-radius: 0 3px 3px 0; }
+.scene:hover { color: var(--fg); }
+.scene.sel { color: var(--accent); border-left-color: var(--accent); background: rgba(255, 122, 26, 0.12); }
+/* Edge handles: trim a clip, resize a graphic or a zoom. */
+.clip .h, .gblock .h, .zoomm .h { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; z-index: 2; }
+.clip .h.in, .gblock .h.in, .zoomm .h.in { left: 0; }
+.clip .h.out, .gblock .h.out, .zoomm .h.out { right: 0; }
+.clip .h:hover, .clip.sel .h { background: linear-gradient(90deg, transparent 2px, var(--accent) 2px, var(--accent) 5px, transparent 5px); }
+.gblock .h:hover { background: rgba(255, 255, 255, 0.35); }
+.zoomm .h { width: 5px; }
+.snapline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--pin); pointer-events: none; z-index: 4; box-shadow: 0 0 6px var(--pin); }
 .pinm { position: absolute; top: 3px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: var(--pin); border: none; padding: 0; }
 .pinm.d { background: var(--accent); }
 .wave { position: absolute; top: 0; left: 0; height: 100%; pointer-events: none; }
