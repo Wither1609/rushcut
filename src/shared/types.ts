@@ -1,0 +1,178 @@
+// Shared data model. All times are in seconds of the SOURCE (raw) video.
+// The edited output is the concatenation of `keep` ranges; export maps source time to output time.
+
+export interface Word {
+  text: string
+  start: number
+  end: number
+}
+
+export interface Range {
+  in: number
+  out: number
+}
+
+export type GfxComp = 'title' | 'lowerThird' | 'list' | 'callout' | 'number' | 'quote'
+
+export interface GfxItem {
+  id: string
+  t: number
+  d: number
+  comp: GfxComp
+  props: {
+    title?: string
+    subtitle?: string
+    items?: string[]
+    text?: string
+  }
+}
+
+export interface Zoom {
+  t: number
+  d: number
+  scale: number
+}
+
+export interface Chapter {
+  t: number
+  title: string
+}
+
+export interface Edl {
+  version: string // "V1", "V2"…
+  parent: string | null
+  createdAt: string
+  status: 'review' | 'approved' | 'archived'
+  origin: 'claude' | 'manual'
+  designSystem: string
+  summary: string // changelog written by Claude
+  keep: Range[]
+  chapters: Chapter[]
+  zooms: Zoom[]
+  gfx: GfxItem[]
+  captions: { enabled: boolean; maxWords: number; uppercase: boolean }
+  resolves: string[]
+}
+
+export type ShapeTool = 'pen' | 'ellipse' | 'arrow' | 'rect'
+
+export interface Shape {
+  tool: ShapeTool
+  color: string
+  pts?: [number, number][] // pen, normalized 0..1
+  a?: [number, number]
+  b?: [number, number]
+}
+
+export interface Comment {
+  id: string
+  t: number
+  text: string
+  sketch: Shape[]
+  frame?: string // file name of the JPEG snapshot (frame + sketch) in comments/
+  createdIn: string // version the comment was made on
+  fixedIn?: string
+  createdAt: string
+}
+
+export interface Recipe {
+  source: string
+  avgShot: number
+  shots: number[]
+  summary: string
+  rhythm: string
+  zooms: string
+  captions: string
+  graphics: string
+  structure: string
+  sound: string
+}
+
+export interface MediaInfo {
+  path: string
+  duration: number
+  width: number
+  height: number
+  fps: number
+  hasAudio: boolean
+}
+
+export interface JobState {
+  id: string
+  label: string
+  progress: number // 0..1, -1 = indeterminate
+  status: 'queued' | 'running' | 'done' | 'error'
+  error?: string
+}
+
+export interface Project {
+  id: string
+  name: string
+  dir: string
+  createdAt: string
+  media: MediaInfo
+  ready: { proxy: boolean; peaks: boolean; sprite: boolean; transcript: boolean; silences: boolean }
+  sprite?: { file: string; every: number; cols: number; w: number; h: number; count: number }
+  versions: string[]
+  current: string | null
+  notes: string
+  designSystem: string
+  recipe?: Recipe
+}
+
+export interface ProjectBundle {
+  project: Project
+  words: Word[]
+  silences: Range[]
+  peaks: number[] // 0..255, PEAKS_PER_SEC per second
+  edls: Record<string, Edl>
+  comments: Comment[]
+}
+
+export const PEAKS_PER_SEC = 50
+
+export interface DesignSystem {
+  id: string
+  name: string
+  note: string
+  bg: string
+  fg: string
+  accent: string
+  font: string
+  weight: number
+  radius: number
+  builtin?: boolean
+}
+
+export interface Settings {
+  anthropicKey: string
+  elevenKey: string
+  claudeModel: string
+  effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+  scribeModel: string
+  projectsDir: string
+}
+
+export interface PublicSettings {
+  hasAnthropicKey: boolean
+  hasElevenKey: boolean
+  claudeModel: string
+  effort: Settings['effort']
+  scribeModel: string
+  projectsDir: string
+}
+
+export interface ExportOptions {
+  version: string
+  height: 720 | 1080 | 2160
+  burnCaptions: boolean
+}
+
+export const BUILTIN_DS: DesignSystem[] = [
+  { id: 'ambre', name: 'Studio Ambre', note: 'chaud, contrasté', bg: '#17120d', fg: '#fff5e8', accent: '#ff7a1a', font: 'Bricolage Grotesque', weight: 800, radius: 10, builtin: true },
+  { id: 'carte', name: 'Carte blanche', note: 'reels, très lisible', bg: '#efeeec', fg: '#141414', accent: '#2d9cff', font: 'Archivo Black', weight: 400, radius: 14, builtin: true },
+  { id: 'nuit', name: 'Bleu nuit', note: 'tech', bg: '#0b1020', fg: '#e8edff', accent: '#7cf2c8', font: 'JetBrains Mono', weight: 700, radius: 6, builtin: true },
+  { id: 'revue', name: 'Revue', note: 'éditorial', bg: '#1f2a24', fg: '#f4f1e8', accent: '#e9c46a', font: 'Instrument Serif', weight: 400, radius: 2, builtin: true }
+]
+
+export const FONT_CHOICES = ['Bricolage Grotesque', 'Archivo Black', 'JetBrains Mono', 'Instrument Serif', 'Figtree']

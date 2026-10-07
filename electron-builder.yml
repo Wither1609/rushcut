@@ -1,0 +1,23 @@
+appId: app.rushcut.editor
+productName: Rushcut
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+asarUnpack:
+  - node_modules/ffmpeg-static/**
+  - node_modules/ffprobe-static/**
+mac:
+  category: public.app-category.video
+  # Built for the Mac's own architecture: ffmpeg-static downloads the binary of the machine that runs npm install.
+  target: dmg
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
