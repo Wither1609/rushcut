@@ -5,7 +5,7 @@ import { pathToFileURL } from 'url'
 import { Readable } from 'stream'
 import {
   addIllustrations, createProject, deleteProject, removeIllustration, listProjects, loadBundle, loadProject, nextVersionName, projectDir, root, runImportPipeline, saveComments,
-  saveCommentFrame, saveEdl, transcribeProject, updateProject
+  saveCommentFrame, saveEdl, saveWords, transcribeProject, updateProject
 } from './projects'
 import { claudeCodeStatus } from './claudeCode'
 import { deleteDesignSystem, getSettings, listDesignSystems, publicSettings, saveDesignSystem, setSettings } from './store'
@@ -13,7 +13,7 @@ import { cancelJob, dismissJob, enqueue, listJobs, notifyProject } from './jobs'
 import { applyComments, designSystemFromImage, generateFirstCut } from './claude'
 import { recipeFromReference } from './reference'
 import { exportVersion, setRendererUrl } from './export'
-import type { Comment, DesignSystem, Edl, ExportOptions, Project, Settings } from '../shared/types'
+import type { Comment, DesignSystem, Edl, ExportOptions, Project, Settings, Word } from '../shared/types'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'rushcut', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } }
@@ -125,6 +125,7 @@ function registerIpc() {
   handle('project:update', (id: string, patch: Partial<Project>) => updateProject(id, patch))
   handle('project:saveEdl', (id: string, edl: Edl) => saveEdl(id, edl))
   handle('project:saveComments', (id: string, c: Comment[]) => saveComments(id, c))
+  handle('project:saveWords', (id: string, w: Word[]) => saveWords(id, w))
   handle('project:saveFrame', (id: string, cid: string, dataUrl: string) => saveCommentFrame(id, cid, dataUrl))
   handle('assets:add', async (id: string, files?: string[]) => {
     let list = files

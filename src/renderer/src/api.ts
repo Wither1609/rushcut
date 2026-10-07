@@ -1,5 +1,5 @@
 import type {
-  ClaudeCodeStatus, Comment, DesignSystem, Edl, ExportOptions, Illustration, JobState, Project, ProjectBundle, PublicSettings, Recipe, Settings
+  ClaudeCodeStatus, Comment, DesignSystem, Edl, ExportOptions, Illustration, JobState, Project, ProjectBundle, PublicSettings, Recipe, Settings, Word
 } from '../../shared/types'
 
 const c = <T,>(ch: string, ...a: unknown[]) => window.rushcut.call<T>(ch, ...a)
@@ -21,6 +21,7 @@ export const api = {
   updateProject: (id: string, p: Partial<Project>) => c<Project>('project:update', id, p),
   saveEdl: (id: string, e: Edl) => c<void>('project:saveEdl', id, e),
   saveComments: (id: string, cm: Comment[]) => c<void>('project:saveComments', id, cm),
+  saveWords: (id: string, w: Word[]) => c<void>('project:saveWords', id, w),
   saveFrame: (id: string, cid: string, dataUrl: string) => c<string>('project:saveFrame', id, cid, dataUrl),
   addIllustrations: (id: string, files?: string[]) => c<Illustration[] | null>('assets:add', id, files),
   removeIllustration: (id: string, file: string) => c<Illustration[]>('assets:remove', id, file),

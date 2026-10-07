@@ -13,7 +13,7 @@ import { Onboarding } from './components/Onboarding'
 import { StylePanel } from './components/StylePanel'
 import { cutRange, editedDuration, keepIndexAt, restoreRange, shortTime, splitAt, srcToOut } from '../../shared/edl'
 import { buildChunks } from '../../shared/overlay'
-import { BUILTIN_DS, type Chapter, type Comment, type DesignSystem, type Edl, type ExportOptions, type JobState, type ProjectBundle, type Shape, type Zoom } from '../../shared/types'
+import { BUILTIN_DS, type Chapter, type Comment, type DesignSystem, type Edl, type ExportOptions, type JobState, type ProjectBundle, type Shape, type Word, type Zoom } from '../../shared/types'
 
 interface Props {
   projectId: string
@@ -24,6 +24,9 @@ interface Props {
 }
 
 type Tab = 'transcript' | 'comments' | 'style'
+
+/** One step of undo history: an edit of the current version, or a transcript correction. */
+type Step = { edl: Edl } | { words: Word[] }
 
 export const Ic = ({ d, size = 16 }: { d: string; size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -71,8 +74,8 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
   const [generating, setGenerating] = useState(false)
   const [playing, setPlaying] = useState(false)
   const player = useRef<PlayerHandle>(null)
-  const undo = useRef<Edl[]>([])
-  const redo = useRef<Edl[]>([])
+  const undo = useRef<Step[]>([])
+  const redo = useRef<Step[]>([])
 
   const reload = useCallback(async () => {
     try {
@@ -113,7 +116,7 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
       if (!b) return
       const prev = b.edls[next.version]
       if (record && prev) {
-        undo.current.push(prev)
+        undo.current.push({ edl: prev })
         if (undo.current.length > 200) undo.current.shift()
         redo.current = []
       }
@@ -123,17 +126,40 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
     [b, projectId, notify]
   )
 
+  /** Corrected transcript: saved to words.json, so captions, the .srt and Claude all read the fixed text. */
+  const setWords = useCallback(
+    (next: Word[], record = true) => {
+      if (!b) return
+      if (record) {
+        undo.current.push({ words: b.words })
+        if (undo.current.length > 200) undo.current.shift()
+        redo.current = []
+      }
+      // Word indexes may have moved: a word selection would point at other words.
+      setSelection((s) => (s?.kind === 'words' ? null : s))
+      setB({ ...b, words: next })
+      void api.saveWords(projectId, next).catch((e) => notify(e.message, true))
+    },
+    [b, projectId, notify]
+  )
+
   const doUndo = useCallback(
     (back: boolean) => {
-      if (!edl) return
+      if (!edl || !b) return
       const from = back ? undo.current : redo.current
       const to = back ? redo.current : undo.current
-      const e = from.pop()
-      if (!e || e.version !== edl.version) return
-      to.push(edl)
-      commit(e, false)
+      const step = from.pop()
+      if (!step) return
+      if ('words' in step) {
+        to.push({ words: b.words })
+        setWords(step.words, false)
+        return
+      }
+      if (step.edl.version !== edl.version) return
+      to.push({ edl })
+      commit(step.edl, false)
     },
-    [edl, commit]
+    [edl, b, commit, setWords]
   )
 
   const saveComments = useCallback(
@@ -285,9 +311,16 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
   // ---- keyboard -----------------------------------------------------------------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (modal || onboarding || (e.target instanceof HTMLElement && e.target.closest('input,textarea,select'))) return
       const k = e.key.toLowerCase()
       const mod = e.metaKey || e.ctrlKey
+      if (mod && k === 'f' && !modal && !onboarding) {
+        e.preventDefault()
+        setSelection((s) => (s?.kind === 'gfx' || s?.kind === 'zoom' || s?.kind === 'chapter' ? null : s))
+        setTab('transcript')
+        setTimeout(() => document.querySelector<HTMLInputElement>('#transcript-find')?.select())
+        return
+      }
+      if (modal || onboarding || (e.target instanceof HTMLElement && e.target.closest('input,textarea,select'))) return
       if (mod && k === 'z') {
         e.preventDefault()
         doUndo(!e.shiftKey)
@@ -514,6 +547,7 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
                       keep={edl.keep}
                       sel={selection?.kind === 'words' ? [selection.a, selection.b] : null}
                       onSelect={(s) => setSelection(s ? { kind: 'words', a: s[0], b: s[1] } : null)}
+                      onChange={setWords}
                       emptyHint={
                         <div className="empty-hint">
                           {p.media.hasAudio ? (
@@ -534,7 +568,7 @@ export function Editor({ projectId, onClose, openSettings, notify, jobs }: Props
                         </div>
                       }
                     />
-                    <p className="pane-foot muted">Glisse sur des mots puis <kbd>Suppr</kbd> pour les couper.</p>
+                    <p className="pane-foot muted">Glisse sur des mots puis <kbd>Suppr</kbd> pour les couper. Double-clic sur un mot pour le corriger.</p>
                   </div>
                 )}
                 {tab === 'comments' && (

@@ -97,6 +97,15 @@ export function nextVersionName(p: Project) {
   return 'V' + ((n.length ? Math.max(...n) : 0) + 1)
 }
 
+/** The corrected transcript. Timings come from the transcription and must stay sound: ordered, finite, non-empty text. */
+export function saveWords(id: string, words: Word[]) {
+  const valid =
+    Array.isArray(words) &&
+    words.every((w, i) => typeof w?.text === 'string' && w.text.trim() !== '' && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end >= w.start && (i === 0 || w.start >= words[i - 1].start))
+  if (!valid) throw new Error('Transcript invalide : correction non enregistrée.')
+  writeJson(path.join(projectDir(id), 'words.json'), words.map(({ text, start, end }) => ({ text: text.trim(), start, end })))
+}
+
 export function saveComments(id: string, comments: Comment[]) {
   writeJson(path.join(projectDir(id), 'comments.json'), comments)
 }

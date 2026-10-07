@@ -88,10 +88,13 @@ Quatre styles sont fournis. **+ Nouveau** crée un design system à partir d'une
 | M | Ajouter un chapitre à la tête de lecture |
 | Suppr | Supprimer le plan, le graphisme, le zoom, le chapitre ou les mots sélectionnés. Sur une zone hachurée, restaure le passage |
 | H | Lecture montée ou lecture brute |
-| ⌘/Ctrl+Z, ⇧⌘Z | Annuler, rétablir |
+| ⌘/Ctrl+Z, ⇧⌘Z | Annuler, rétablir (montage et corrections du transcript) |
+| ⌘/Ctrl+F | Rechercher et remplacer un mot du transcript |
 | ⌘/Ctrl + molette | Zoom de la timeline |
 
 Dans le transcript, fais glisser la souris sur des mots puis appuie sur **Suppr** : ils sont coupés de la vidéo. Refais la même chose sur des mots barrés pour les restaurer.
+
+Pour corriger une erreur de transcription, double-clique sur le mot. **Entrée** enregistre, **Échap** annule, **Tab** passe au mot suivant. Si tu tapes plusieurs mots, ils se partagent la durée du mot d'origine. Si tu vides le champ, le mot disparaît du transcript, mais l'audio n'est pas coupé. Pour un nom mal entendu partout, utilise la recherche en haut du transcript (**⌘/Ctrl+F**) puis **Tout remplacer**. Les sous-titres, le `.srt` et Claude utilisent le texte corrigé.
 
 Sur la timeline :
 - Glisse le bord d'un plan pour le raccourcir ou le rallonger. Le lecteur montre l'image du bord pendant le geste. Entre deux plans collés (après **C**), le point de montage se déplace sans rien couper.
@@ -106,7 +109,7 @@ Les projets sont dans `Documents/Rushcut/<projet>/` :
 |---|---|
 | `project.json` | réglages, versions |
 | `edl/V*.json` | un montage par version |
-| `words.json` | transcript |
+| `words.json` | transcript, avec tes corrections |
 | `comments.json`, `comments/*.jpg` | commentaires et images annotées |
 | `assets/` | images d'illustration |
 | `proxy.mp4`, `sprite.jpg`, `peaks.bin` | médias légers pour l'édition |
