@@ -2,7 +2,7 @@ import { BrowserWindow } from 'electron'
 import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
-import { FFMPEG, run, videoEncoderArgs } from './ffmpeg'
+import { detectEncoder, FFMPEG, run, runDecoding, videoEncoderArgs } from './ffmpeg'
 import { loadBundle } from './projects'
 import { getDesignSystem } from './store'
 import type { JobCtx } from './jobs'
@@ -68,17 +68,11 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
   // 1. Video pieces. Each one is cached by content: a V2 that changes 2 cuts re-encodes only those.
   const list = pieces(edl.keep, edl.zooms)
   const pieceEnc = await videoEncoderArgs(H >= 2160 ? 60000 : H >= 1080 ? 25000 : 12000, 14)
-  const files: string[] = []
-  let reused = 0
-  for (const [i, p] of list.entries()) {
+  const files = list.map((p) => path.join(cache, `p_${sha({ src: media.path, size: stat.size, mtime: stat.mtimeMs, p, W, H, FPS, pieceEnc, reframe })}.mkv`))
+  const todo = list.map((p, i) => ({ p, file: files[i] })).filter(({ file }) => !fs.existsSync(file))
+  const reused = list.length - todo.length
+  const encodePiece = async (p: Piece, file: string) => {
     const len = p.out - p.in
-    const file = path.join(cache, `p_${sha({ src: media.path, size: stat.size, mtime: stat.mtimeMs, p, W, H, FPS, pieceEnc, reframe })}.mkv`)
-    files.push(file)
-    if (fs.existsSync(file)) {
-      reused++
-      continue
-    }
-    ctx.progress(i / list.length * 0.5, `Segments ${i + 1}/${list.length}`)
     const s = p.scale
     const vf =
       reframe +
@@ -87,13 +81,32 @@ export async function exportVersion(projectId: string, opts: ExportOptions, ctx:
     const af = `aresample=48000,afade=t=in:d=${fade},afade=t=out:st=${(len - fade).toFixed(3)}:d=${fade}`
     const audioIn = media.hasAudio ? [] : ['-f', 'lavfi', '-t', len.toFixed(3), '-i', 'anullsrc=r=48000:cl=stereo']
     const tmp = file + '.part.mkv'
-    await run(FFMPEG, [
+    await runDecoding([
       '-ss', p.in.toFixed(3), '-t', len.toFixed(3), '-i', media.path, ...audioIn,
       '-map', '0:v:0', '-map', media.hasAudio ? '0:a:0' : '1:a:0',
       '-vf', vf, '-af', af, ...pieceEnc, '-c:a', 'pcm_s16le', '-ac', '2', '-t', len.toFixed(3), tmp
     ])
     fs.renameSync(tmp, file)
   }
+  // Hardware encoders run several sessions side by side; libx264 already uses half the cores on its own.
+  const workers = (await detectEncoder()) === 'libx264' ? 1 : 3
+  let next = 0
+  let done = 0
+  const errors: unknown[] = []
+  const worker = async () => {
+    while (!errors.length && next < todo.length) {
+      const { p, file } = todo[next++]
+      try {
+        await encodePiece(p, file)
+      } catch (error) {
+        errors.push(error)
+      }
+      ctx.progress((++done / todo.length) * 0.5, `Segments ${done}/${todo.length}`)
+    }
+  }
+  if (todo.length) ctx.progress(0, `Segments 0/${todo.length}`)
+  await Promise.all(Array.from({ length: Math.min(workers, todo.length) }, worker))
+  if (errors.length) throw errors[0]
   const piecesTxt = path.join(cache, `pieces_${opts.version}.txt`)
   fs.writeFileSync(piecesTxt, files.map(q).join('\n'))
 

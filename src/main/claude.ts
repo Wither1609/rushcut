@@ -9,7 +9,7 @@ import { callClaudeCode } from './claudeCode'
 import { fitToKeep, normalizeKeep, snapKeep } from '../shared/edl'
 import { briefPrompt } from '../shared/templates'
 import { applyOps, chapterRef, zoomRef, type EdlOp } from '../shared/ops'
-import { FONT_CHOICES, type CaptionStyle, type Comment, type DesignSystem, type Edl, type GfxComp, type ProjectBundle, type Recipe } from '../shared/types'
+import { FONT_CHOICES, type CaptionStyle, type Comment, type DesignSystem, type Edl, type GfxComp, type ProjectBundle, type Recipe, type Word } from '../shared/types'
 
 // Models that accept server-side refusal fallbacks (`fallbacks: "default"`).
 const FALLBACK_MODELS = ['claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1', 'claude-sonnet-5-5']
@@ -134,10 +134,29 @@ When a <brief> is given, it comes from the creator's onboarding answers: follow 
 resolves — ids of the review comments your EDL addresses (empty for a first cut).
 summary — in French, for the editor UI.`
 
+/**
+ * One line per phrase instead of one line per word: a quarter to a third fewer tokens. Inside a phrase, a word ends
+ * where the next one starts (give or take a breath), and any pause long enough to cut ends the line,
+ * so Claude still sees every cut point. snapKeep puts the edges back on exact word boundaries.
+ */
+function transcriptLines(words: Word[]): string[] {
+  const lines: string[] = []
+  let line: string[] = []
+  words.forEach((w, i) => {
+    line.push(`${w.start.toFixed(2)}|${w.text}`)
+    const n = words[i + 1]
+    if (!n || n.start - w.end > 0.25 || /[.!?…]$/.test(w.text) || line.length >= 16) {
+      lines.push(`${line.join(' ')} ~${w.end.toFixed(2)}`)
+      line = []
+    }
+  })
+  return lines
+}
+
 function transcriptBlock(b: ProjectBundle): string {
-  const lines = b.words.map((w) => `${w.start.toFixed(2)}-${w.end.toFixed(2)} ${w.text}`)
   const sil = b.silences.map((s) => `${s.in.toFixed(2)}-${s.out.toFixed(2)}`).join(', ')
-  return `<recording duration="${b.project.media.duration.toFixed(2)}">\n<silences>${sil}</silences>\n<transcript format="start-end word">\n${lines.join('\n')}\n</transcript>\n</recording>`
+  const format = 'one line per phrase; each word is start|word; ~t is the end of the last word of the line; within a line a word ends right before the next one starts'
+  return `<recording duration="${b.project.media.duration.toFixed(2)}">\n<silences>${sil}</silences>\n<transcript format="${format}">\n${transcriptLines(b.words).join('\n')}\n</transcript>\n</recording>`
 }
 
 function contextBlock(b: ProjectBundle, ds: DesignSystem): string {
