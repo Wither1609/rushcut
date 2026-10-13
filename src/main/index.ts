@@ -7,7 +7,7 @@ import {
   addIllustrations, createProject, deleteProject, removeIllustration, listProjects, loadBundle, nextVersionName, projectDir, root, runImportPipeline, saveComments,
   saveCommentFrame, saveEdl, saveWords, transcribeProject, updateProject
 } from './projects'
-import { claudeCodeStatus } from './claudeCode'
+import { cancelClaudeLogin, claudeCodeStatus, claudeLogout, finishClaudeLogin, startClaudeLogin } from './claudeCode'
 import { deleteDesignSystem, getSettings, listDesignSystems, publicSettings, saveDesignSystem, setSettings } from './store'
 import { cancelJob, dismissJob, enqueue, events, listJobs, notifyProject } from './jobs'
 import { applyComments, designSystemFromImage, generateFirstCut } from './claude'
@@ -109,6 +109,10 @@ function registerIpc() {
     return setSettings(clean)
   })
   handle('settings:claudeCode', () => claudeCodeStatus())
+  handle('settings:claudeLogin', () => startClaudeLogin())
+  handle('settings:claudeLoginCode', (code: string) => finishClaudeLogin(code))
+  handle('settings:claudeLoginCancel', () => cancelClaudeLogin())
+  handle('settings:claudeLogout', () => claudeLogout())
   handle('settings:pickDir', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], defaultPath: getSettings().projectsDir })
     return r.canceled ? null : setSettings({ projectsDir: r.filePaths[0] })

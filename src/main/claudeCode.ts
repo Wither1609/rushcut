@@ -97,6 +97,97 @@ export async function claudeCodeStatus(): Promise<ClaudeCodeStatus> {
   }
 }
 
+// Sign-in from Rushcut: `claude auth login` prints an authorization URL, then waits for the code
+// that claude.com shows once the user approves. Rushcut displays the URL and passes the code on.
+
+interface Login {
+  child: ReturnType<typeof spawn>
+  output: string
+  done: Promise<number>
+}
+
+let login: Login | null = null
+
+const LOGIN_URL_RE = /https:\/\/\S+\/oauth\/authorize\?\S+/
+
+export async function startClaudeLogin(): Promise<{ url: string }> {
+  cancelClaudeLogin()
+  const bin = await findClaude()
+  if (!bin) throw new Error('Claude Code est introuvable. Installe-le (claude.com/claude-code), puis réessaie. Le chemin peut être indiqué dans Réglages.')
+  // On a desktop the CLI opens the browser itself; on the server there is no browser to open.
+  const env = cliEnv(bin)
+  if (process.env.RUSHCUT_SERVER) env.BROWSER = 'true'
+  const child = spawn(bin, ['auth', 'login', '--claudeai'], { env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+  const cur: Login = {
+    child,
+    output: '',
+    done: new Promise((resolve) => {
+      child.on('error', () => resolve(1))
+      child.on('close', (code) => resolve(code ?? 1))
+    })
+  }
+  login = cur
+  const onData = (d: string) => (cur.output += d)
+  child.stdout?.setEncoding('utf8').on('data', onData)
+  child.stderr?.setEncoding('utf8').on('data', onData)
+
+  const url = await new Promise<string | null>((resolve) => {
+    const timer = setTimeout(() => resolve(null), 20_000)
+    const look = () => {
+      const m = cur.output.match(LOGIN_URL_RE)
+      if (m) {
+        clearTimeout(timer)
+        resolve(m[0])
+      }
+    }
+    child.stdout?.on('data', look)
+    child.stderr?.on('data', look)
+    void cur.done.then(() => {
+      clearTimeout(timer)
+      resolve(cur.output.match(LOGIN_URL_RE)?.[0] ?? null)
+    })
+  })
+  if (!url) {
+    cancelClaudeLogin()
+    const detail = cur.output.trim().split('\n').pop()
+    throw new Error(`Claude Code n’a pas proposé de lien de connexion${detail ? ` : ${detail}` : '.'}`)
+  }
+  return { url }
+}
+
+/** Sends the code shown by claude.com, then waits for the CLI to store the credentials. */
+export async function finishClaudeLogin(code: string): Promise<ClaudeCodeStatus> {
+  const cur = login
+  if (!cur) throw new Error('Aucune connexion en cours. Clique à nouveau sur « Se connecter avec Claude ».')
+  const clean = code.trim()
+  if (!clean) throw new Error('Colle le code affiché par Claude après l’autorisation.')
+  if (cur.child.exitCode === null) cur.child.stdin?.write(clean + '\n')
+  const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 60_000))
+  const result = await Promise.race([cur.done, timeout])
+  if (login === cur) login = null
+  if (result === 'timeout') {
+    cur.child.kill()
+    throw new Error('La connexion à Claude n’a pas abouti. Réessaie.')
+  }
+  // The CLI exits with 0 even when the code is refused, and an earlier session may still be signed in.
+  const failed = cur.output.match(/Login failed[^\n]*/)?.[0]
+  const status = await claudeCodeStatus()
+  if (failed || !status.loggedIn) throw new Error(`Connexion refusée${failed ? ` (${failed.trim()})` : ''}. Le code est peut-être expiré ou mal copié : recommence.`)
+  return status
+}
+
+export function cancelClaudeLogin(): void {
+  login?.child.kill()
+  login = null
+}
+
+export async function claudeLogout(): Promise<ClaudeCodeStatus> {
+  cancelClaudeLogin()
+  const bin = await findClaude()
+  if (bin) await run(bin, ['auth', 'logout'])
+  return claudeCodeStatus()
+}
+
 interface CliResult {
   type: 'result'
   subtype: string
@@ -118,7 +209,7 @@ export async function callClaudeCode(
   signal?: AbortSignal
 ): Promise<unknown> {
   const bin = await findClaude()
-  if (!bin) throw new Error('Claude Code est introuvable. Installe-le, connecte-toi avec ton abonnement (claude auth login), puis réessaie. Le chemin peut être indiqué dans Réglages.')
+  if (!bin) throw new Error('Claude Code est introuvable. Installe-le, connecte-toi dans Réglages (« Se connecter avec Claude »), puis réessaie. Le chemin peut être indiqué dans Réglages.')
   const s = getSettings()
   const args = [
     '-p',
@@ -188,7 +279,7 @@ export async function callClaudeCode(
   }
   if (result.is_error || result.subtype !== 'success') {
     const msg = result.result ?? ''
-    if (/not logged in|\/login|invalid api key|oauth/i.test(msg)) throw new Error('Claude Code n’est pas connecté à ton abonnement. Lance « claude auth login » dans un terminal, puis réessaie.')
+    if (/not logged in|\/login|invalid api key|oauth/i.test(msg)) throw new Error('Claude Code n’est pas connecté à ton abonnement. Dans Réglages, clique sur « Se connecter avec Claude », puis réessaie.')
     if (result.api_error_status === 429 || /usage limit|rate limit/i.test(msg)) throw new Error(`Limite d’utilisation de ton abonnement Claude atteinte. ${msg}`.trim())
     if (result.subtype === 'error_max_structured_output_retries') throw new Error(`Réponse de Claude illisible (${label}).`)
     throw new Error(`Erreur Claude Code (${label}) : ${msg || result.subtype}`)

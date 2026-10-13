@@ -15,7 +15,7 @@ npm run dev
 
 Au premier lancement, la fenêtre Réglages s'ouvre. Colle ta clé **ElevenLabs**, puis choisis comment joindre Claude :
 
-- **Mon abonnement Claude** (Pro ou Max) : Rushcut passe par [Claude Code](https://claude.com/claude-code) installé sur ton ordinateur. Installe-le, lance `claude auth login` une fois dans un terminal, puis clique sur **Vérifier**. Pas de clé API : l'usage compte dans les limites de ton abonnement. Si `claude` n'est pas trouvé tout seul, indique son chemin.
+- **Mon abonnement Claude** (Pro ou Max) : Rushcut passe par [Claude Code](https://claude.com/claude-code) installé sur ton ordinateur. Installe-le, puis clique sur **Se connecter avec Claude** : autorise Rushcut sur la page Claude qui s'ouvre et colle le code affiché. Aucun terminal nécessaire. Pas de clé API : l'usage compte dans les limites de ton abonnement. Si `claude` n'est pas trouvé tout seul, indique son chemin.
 - **Clé API** : colle ta clé **Claude (Anthropic)**.
 
 Les clés sont chiffrées avec le trousseau du système.

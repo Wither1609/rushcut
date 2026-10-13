@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { SERVED } from '../web'
 import type { Notify } from '../App'
 import type { ClaudeAuth, ClaudeCodeStatus, PublicSettings, Settings } from '../../../shared/types'
 
@@ -14,6 +15,10 @@ export function SettingsModal({ settings, onChange, onClose, notify }: { setting
   const [claudePath, setPath] = useState(settings.claudePath)
   const [cc, setCc] = useState<ClaudeCodeStatus | null>(null)
   const [checking, setChecking] = useState(false)
+  // Sign-in started from Rushcut: authorization link opened, waiting for the code claude.com shows.
+  const [loginUrl, setLoginUrl] = useState<string | null>(null)
+  const [loginCode, setLoginCode] = useState('')
+  const [loggingIn, setLoggingIn] = useState(false)
   const [anthropicKey, setA] = useState('')
   const [elevenKey, setE] = useState('')
   const [claudeModel, setModel] = useState(settings.claudeModel)
@@ -36,6 +41,71 @@ export function SettingsModal({ settings, onChange, onClose, notify }: { setting
   useEffect(() => {
     if (claudeAuth === 'subscription' && !cc) void check()
   }, [claudeAuth])
+
+  // On a desktop the browser can hand the sign-in back to Claude Code by itself: watch for it.
+  useEffect(() => {
+    if (!loginUrl) return
+    const t = setInterval(() => {
+      void api.claudeCodeStatus().then((s) => {
+        if (!s.loggedIn) return
+        setCc(s)
+        setLoginUrl(null)
+        void api.claudeLoginCancel()
+      }).catch(() => undefined)
+    }, 4000)
+    return () => clearInterval(t)
+  }, [loginUrl])
+
+  useEffect(() => () => void api.claudeLoginCancel().catch(() => undefined), [])
+
+  const startLogin = async () => {
+    setLoggingIn(true)
+    // In a browser the tab is opened during the click, or it would be blocked; on a desktop Claude Code opens it.
+    const tab = SERVED ? window.open('', '_blank') : null
+    if (tab) tab.opener = null
+    try {
+      const { url } = await api.claudeLogin()
+      setLoginCode('')
+      setLoginUrl(url)
+      if (tab) tab.location.href = url
+    } catch (e) {
+      tab?.close()
+      notify((e as Error).message, true)
+    } finally {
+      setLoggingIn(false)
+    }
+  }
+
+  const sendCode = async () => {
+    setLoggingIn(true)
+    try {
+      const s = await api.claudeLoginCode(loginCode)
+      setCc(s)
+      setLoginUrl(null)
+      notify(`Connecté à Claude${s.plan ? ` (${s.plan})` : ''}`)
+    } catch (e) {
+      setLoginUrl(null)
+      notify((e as Error).message, true)
+    } finally {
+      setLoggingIn(false)
+    }
+  }
+
+  const cancelLogin = () => {
+    setLoginUrl(null)
+    void api.claudeLoginCancel()
+  }
+
+  const logout = async () => {
+    setChecking(true)
+    try {
+      setCc(await api.claudeLogout())
+    } catch (e) {
+      notify((e as Error).message, true)
+    } finally {
+      setChecking(false)
+    }
+  }
 
   const save = async () => {
     const patch: Partial<Settings> = { claudeAuth, claudePath: claudePath.trim(), claudeModel, effort, scribeModel }
@@ -84,8 +154,43 @@ export function SettingsModal({ settings, onChange, onClose, notify }: { setting
             <p className="muted" style={{ fontSize: 12, margin: 0 }}>
               Le montage passe par Claude Code, connecté à ton abonnement Pro ou Max : pas de clé API, l’usage compte dans les limites de ton abonnement.
               {cc && !cc.installed && <> Installe Claude Code (claude.com/claude-code), puis connecte-toi.</>}
-              {cc?.installed && !cc.loggedIn && <> Dans un terminal, lance <code>claude auth login</code>, puis clique sur Vérifier.</>}
             </p>
+            {cc?.installed && !loginUrl && (
+              <div className="row">
+                {cc.loggedIn ? (
+                  <>
+                    <button className="btn" disabled={loggingIn || checking} onClick={() => void startLogin()}>Changer de compte</button>
+                    <button className="btn ghost" disabled={loggingIn || checking} onClick={() => void logout()}>Se déconnecter</button>
+                  </>
+                ) : (
+                  <button className="btn primary" disabled={loggingIn || checking} onClick={() => void startLogin()}>
+                    {loggingIn ? 'Ouverture…' : 'Se connecter avec Claude'}
+                  </button>
+                )}
+              </div>
+            )}
+            {loginUrl && (
+              <>
+                <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                  Autorise Rushcut sur la page Claude qui vient de s’ouvrir (sinon <a href={loginUrl} target="_blank" rel="noreferrer">ouvre ce lien</a>), puis colle ici le code affiché.
+                </p>
+                <div className="row">
+                  <input
+                    id="claudeLoginCode"
+                    className="input mono"
+                    placeholder="Code d’autorisation"
+                    autoFocus
+                    value={loginCode}
+                    onChange={(e) => setLoginCode(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && loginCode.trim() && void sendCode()}
+                  />
+                  <button className="btn primary" disabled={loggingIn || !loginCode.trim()} onClick={() => void sendCode()}>
+                    {loggingIn ? 'Connexion…' : 'Valider'}
+                  </button>
+                  <button className="btn ghost" disabled={loggingIn} onClick={cancelLogin}>Annuler</button>
+                </div>
+              </>
+            )}
             <div className="row">
               <input id="claudePath" className="input mono" placeholder={cc?.path ?? 'Chemin de claude (détecté automatiquement)'} value={claudePath} onChange={(e) => setPath(e.target.value)} />
               <button className="btn" disabled={checking} onClick={() => void check()}>Vérifier</button>
