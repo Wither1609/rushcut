@@ -379,16 +379,15 @@ export function Onboarding({ project, jobs, hasWords, notify, onSkip, onGenerate
               </label>
               {!hasWords && (
                 <div className="ob-wait ob-in" style={{ ['--i' as string]: 7 }}>
-                  <span className="spin" />
                   {transcribing ? (
-                    <span>Transcription en cours{transcribing.progress >= 0 ? ` (${Math.round(transcribing.progress * 100)} %)` : ''}. Le bouton s’active dès qu’elle est terminée.</span>
-                  ) : project.media.hasAudio ? (
                     <>
-                      <span>Il faut le transcript pour monter.</span>
-                      <button className="btn sm" onClick={() => void api.transcribe(project.id).catch((e) => notify(e.message, true))}>Lancer la transcription</button>
+                      <span className="spin" />
+                      <span>Transcription en cours{transcribing.progress >= 0 ? ` (${Math.round(transcribing.progress * 100)} %)` : ''}. Tu peux monter maintenant sans elle : Claude s’appuiera sur les silences et les images.</span>
                     </>
+                  ) : project.media.hasAudio ? (
+                    <span>Pas de transcript. Claude montera sans paroles (utile si personne ne parle) ; relance la transcription pour sous-titrer.</span>
                   ) : (
-                    <span>Ce rush n’a pas de piste audio : Claude ne peut pas le monter depuis un transcript.</span>
+                    <span>Ce rush n’a pas de piste audio : Claude montera à partir des images.</span>
                   )}
                 </div>
               )}
@@ -406,7 +405,7 @@ export function Onboarding({ project, jobs, hasWords, notify, onSkip, onGenerate
               Continuer <kbd>↵</kbd>
             </button>
           ) : (
-            <button className="btn primary lg glow" disabled={!hasWords} onClick={() => void finish()}>
+            <button className="btn primary lg glow" onClick={() => void finish()}>
               ✦ Monter la V1
             </button>
           )}

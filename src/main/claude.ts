@@ -166,7 +166,9 @@ function transcriptLines(words: Word[]): string[] {
 function transcriptBlock(b: ProjectBundle): string {
   const sil = b.silences.map((s) => `${s.in.toFixed(2)}-${s.out.toFixed(2)}`).join(', ')
   const format = 'one line per phrase; each word is start|word; ~t is the end of the last word of the line; within a line a word ends right before the next one starts'
-  return `<recording duration="${b.project.media.duration.toFixed(2)}">\n<silences>${sil}</silences>\n<transcript format="${format}">\n${transcriptLines(b.words).join('\n')}\n</transcript>\n</recording>`
+  // No words: nobody speaks, or the transcript is still running. Say so instead of sending an empty block.
+  const lines = b.words.length ? transcriptLines(b.words).join('\n') : '(no speech transcript available: edit from the silences and the visuals only)'
+  return `<recording duration="${b.project.media.duration.toFixed(2)}">\n<silences>${sil}</silences>\n<transcript format="${format}">\n${lines}\n</transcript>\n</recording>`
 }
 
 function contextBlock(b: ProjectBundle, ds: DesignSystem): string {
@@ -250,7 +252,6 @@ function toEdl(d: EdlDraft, b: ProjectBundle, version: string, parent: string | 
 }
 
 export async function generateFirstCut(b: ProjectBundle, version: string, dsId: string, signal?: AbortSignal): Promise<Edl> {
-  if (!b.words.length) throw new Error('Il faut un transcript avant de générer la V1 (ajoute ta clé ElevenLabs).')
   const ds = getDesignSystem(dsId)
   const draft = await callJson(
     'V1',
