@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, mediaUrl } from './api'
+import { returnUrl } from './web'
 import { Logo, type Notify } from './App'
 import { shortTime } from '../../shared/edl'
 import { getTemplate } from '../../shared/templates'
@@ -67,6 +68,7 @@ export function Home({ onOpen, openSettings, notify, settings }: { onOpen: (id: 
           <b>Rushcut</b>
         </div>
         <div className="spacer" />
+        {returnUrl() && <a className="btn ghost" href={returnUrl()!}>← Work OS</a>}
         <button className="btn ghost" onClick={openSettings}>Réglages</button>
       </header>
       <main
@@ -80,7 +82,7 @@ export function Home({ onOpen, openSettings, notify, settings }: { onOpen: (id: 
           e.preventDefault()
           setOver(false)
           const f = e.dataTransfer.files[0]
-          if (f) void create(window.rushcut.pathForFile(f))
+          if (f) void window.rushcut.fileRef(f).then(create, (err: Error) => notify(err.message, true))
         }}
       >
         <div className="home-inner">

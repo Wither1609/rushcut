@@ -331,8 +331,8 @@ export function Onboarding({ project, jobs, hasWords, notify, onSkip, onGenerate
                 onDrop={(e) => {
                   e.preventDefault()
                   setOver(false)
-                  const files = [...e.dataTransfer.files].map((f) => window.rushcut.pathForFile(f))
-                  if (files.length) void addImages(files)
+                  const dropped = [...e.dataTransfer.files]
+                  if (dropped.length) void Promise.all(dropped.map((f) => window.rushcut.fileRef(f))).then(addImages, (err: Error) => notify(err.message, true))
                 }}
               >
                 {images.map((im, i) => (

@@ -1,3 +1,4 @@
+import './web'
 import { createRoot } from 'react-dom/client'
 import '@fontsource/bricolage-grotesque/500.css'
 import '@fontsource/bricolage-grotesque/700.css'

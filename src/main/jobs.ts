@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { EventEmitter } from 'events'
 import { CANCELLED, type JobState } from '../shared/types'
 
 // One heavy job at a time: a queue keeps the machine responsive while proxies or exports run.
@@ -7,9 +7,11 @@ const controllers = new Map<string, AbortController>()
 let chain: Promise<unknown> = Promise.resolve()
 let seq = 0
 
+/** 'jobs' (the job list) and 'project-updated' (a project id): sent to the window, or to browsers in server mode. */
+export const events = new EventEmitter()
+
 function broadcast() {
-  const list = [...jobs.values()]
-  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('jobs', list)
+  events.emit('jobs', [...jobs.values()])
 }
 
 let lastSent = 0
@@ -99,5 +101,5 @@ export function dismissJob(id: string) {
 }
 
 export function notifyProject(projectId: string) {
-  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('project-updated', projectId)
+  events.emit('project-updated', projectId)
 }

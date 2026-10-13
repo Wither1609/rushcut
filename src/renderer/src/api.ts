@@ -1,3 +1,4 @@
+import { SERVED } from './web'
 import type {
   ClaudeCodeStatus, Comment, DesignSystem, Edl, ExportOptions, Illustration, JobState, Project, ProjectBundle, PublicSettings, Recipe, Settings, Word
 } from '../../shared/types'
@@ -36,5 +37,6 @@ export const api = {
   cancelJob: (id: string) => c<void>('jobs:cancel', id)
 }
 
+// Desktop: the rushcut:// protocol. Server mode (page and export renderer): a path relative to the editor's page.
 export const mediaUrl = (projectId: string, file: string, bust?: string | number) =>
-  `rushcut://p/${encodeURIComponent(projectId)}/${file}${bust !== undefined ? `?v=${bust}` : ''}`
+  `${SERVED ? 'media/' : 'rushcut://p/'}${encodeURIComponent(projectId)}/${file}${bust !== undefined ? `?v=${bust}` : ''}`
