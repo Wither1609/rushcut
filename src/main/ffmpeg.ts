@@ -22,11 +22,14 @@ export interface RunOptions {
   /** Collect stdout as a Buffer (disables progress parsing). */
   collectStdout?: boolean
   onStdout?: (chunk: Buffer) => void
+  /** Stream stderr line by line (filter logs such as silencedetect), instead of keeping only its tail. */
+  onStderrLine?: (line: string) => void
   signal?: AbortSignal
 }
 
 export function run(bin: string, args: string[], opts: RunOptions = {}): Promise<{ stdout: Buffer; stderr: string }> {
   return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) return reject(new Error('aborted'))
     const withProgress = bin === FFMPEG && opts.duration && !opts.collectStdout && !opts.onStdout
     const fullArgs = bin === FFMPEG ? ['-hide_banner', '-y', ...(withProgress ? ['-progress', 'pipe:1', '-nostats'] : []), ...args] : args
     const child = spawn(bin, fullArgs, { windowsHide: true })
@@ -39,6 +42,7 @@ export function run(bin: string, args: string[], opts: RunOptions = {}): Promise
     const out: Buffer[] = []
     let err = ''
     let buf = ''
+    let errBuf = ''
     child.stdout.on('data', (d: Buffer) => {
       if (opts.onStdout) return opts.onStdout(d)
       if (opts.collectStdout) return void out.push(d)
@@ -55,6 +59,12 @@ export function run(bin: string, args: string[], opts: RunOptions = {}): Promise
       }
     })
     child.stderr.on('data', (d: Buffer) => {
+      if (opts.onStderrLine) {
+        errBuf += d.toString()
+        const lines = errBuf.split('\n')
+        errBuf = lines.pop() ?? ''
+        lines.forEach(opts.onStderrLine)
+      }
       err += d.toString()
       if (err.length > 200_000) err = err.slice(-100_000)
     })
@@ -63,10 +73,30 @@ export function run(bin: string, args: string[], opts: RunOptions = {}): Promise
     child.on('error', reject)
     child.on('close', (code) => {
       opts.signal?.removeEventListener('abort', abort)
+      if (errBuf) opts.onStderrLine?.(errBuf)
       if (code === 0) resolve({ stdout: Buffer.concat(out), stderr: err })
       else reject(new Error(`${bin.split(/[\\/]/).pop()} a échoué (code ${code}) :\n${err.split('\n').slice(-8).join('\n')}`))
     })
   })
+}
+
+// Decoding a 4K or HEVC rush on the CPU is the slow half of a proxy or an export: decode on the GPU when possible.
+// `-hwaccel auto` falls back to software by itself, but some drivers fail outright: then retry without, and stop asking.
+let hwDecode = true
+
+/** Same as run(FFMPEG, args), with hardware decoding of the inputs. `args` must start with the first input's options. */
+export async function runDecoding(args: string[], opts: RunOptions = {}): Promise<{ stdout: Buffer; stderr: string }> {
+  if (hwDecode) {
+    try {
+      return await run(FFMPEG, ['-hwaccel', 'auto', ...args], opts)
+    } catch (e) {
+      if (opts.signal?.aborted) throw e
+      const r = await run(FFMPEG, args, opts)
+      hwDecode = false
+      return r
+    }
+  }
+  return run(FFMPEG, args, opts)
 }
 
 export async function probe(file: string): Promise<MediaInfo> {

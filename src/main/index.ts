@@ -4,32 +4,34 @@ import path from 'path'
 import { pathToFileURL } from 'url'
 import { Readable } from 'stream'
 import {
-  createProject, deleteProject, listProjects, loadBundle, loadProject, nextVersionName, projectDir, root, runImportPipeline, saveComments,
-  saveCommentFrame, saveEdl, transcribeProject, updateProject
+  addIllustrations, createProject, deleteProject, removeIllustration, listProjects, loadBundle, nextVersionName, projectDir, root, runImportPipeline, saveComments,
+  saveCommentFrame, saveEdl, saveWords, transcribeProject, updateProject
 } from './projects'
+import { cancelClaudeLogin, claudeCodeStatus, claudeLogout, finishClaudeLogin, startClaudeLogin } from './claudeCode'
 import { deleteDesignSystem, getSettings, listDesignSystems, publicSettings, saveDesignSystem, setSettings } from './store'
-import { dismissJob, enqueue, listJobs, notifyProject } from './jobs'
+import { cancelJob, dismissJob, enqueue, events, listJobs, notifyProject } from './jobs'
 import { applyComments, designSystemFromImage, generateFirstCut } from './claude'
 import { recipeFromReference } from './reference'
 import { exportVersion, setRendererUrl } from './export'
-import type { Comment, DesignSystem, Edl, ExportOptions, Project, Settings } from '../shared/types'
+import { handlers, resolveMediaFile, MIME } from './media'
+import { DATA_DIR, SERVER, startServer } from './server'
+import type { Comment, DesignSystem, Edl, ExportOptions, Project, Settings, Word } from '../shared/types'
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'rushcut', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } }
 ])
 
-const MIME: Record<string, string> = { '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/x-matroska', '.jpg': 'image/jpeg', '.png': 'image/png', '.mp3': 'audio/mpeg', '.json': 'application/json' }
+// The page is on another origin (file:// or the dev server): without this header, a canvas that draws
+// the video is tainted and the note's frame cannot be saved.
+const CORS = { 'Access-Control-Allow-Origin': '*' }
 
 /** rushcut://p/<projectId>/<file> serves project files, with byte ranges so the video can seek. */
 function registerProtocol() {
   protocol.handle('rushcut', async (req) => {
     try {
       const u = new URL(req.url)
-      const parts = u.pathname.split('/').filter(Boolean).map(decodeURIComponent)
-      const base = projectDir(parts[0])
-      // __source is the raw file itself (used until the proxy is ready).
-      const file = parts[1] === '__source' ? loadProject(parts[0]).media.path : path.resolve(base, ...parts.slice(1))
-      if (parts[1] !== '__source' && !file.startsWith(path.resolve(base) + path.sep)) return new Response('forbidden', { status: 403 })
+      const file = resolveMediaFile(u.pathname.split('/').filter(Boolean).map(decodeURIComponent))
+      if (!file) return new Response('forbidden', { status: 403 })
       const size = fs.statSync(file).size
       const type = MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream'
       const range = req.headers.get('range')?.match(/bytes=(\d*)-(\d*)/)
@@ -39,11 +41,11 @@ function registerProtocol() {
         const body = Readable.toWeb(fs.createReadStream(file, { start, end })) as ReadableStream
         return new Response(body, {
           status: 206,
-          headers: { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(end - start + 1) }
+          headers: { ...CORS, 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(end - start + 1) }
         })
       }
       const body = Readable.toWeb(fs.createReadStream(file)) as ReadableStream
-      return new Response(body, { headers: { 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': String(size), 'Cache-Control': 'no-cache' } })
+      return new Response(body, { headers: { ...CORS, 'Content-Type': type, 'Accept-Ranges': 'bytes', 'Content-Length': String(size), 'Cache-Control': 'no-cache' } })
     } catch {
       return new Response('not found', { status: 404 })
     }
@@ -73,6 +75,14 @@ function createWindow() {
   void win.loadURL(rendererUrl())
 }
 
+// Jobs and project changes reach every window.
+events.on('jobs', (list) => {
+  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('jobs', list)
+})
+events.on('project-updated', (id) => {
+  for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send('project-updated', id)
+})
+
 const VIDEO_EXT = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'mts', 'mxf']
 
 async function pickFile(title: string, extensions: string[]): Promise<string | null> {
@@ -80,7 +90,9 @@ async function pickFile(title: string, extensions: string[]): Promise<string | n
   return r.canceled ? null : r.filePaths[0]
 }
 
+/** Registered for the window (IPC) and for the browser (POST /api/call/<channel>, server mode). */
 function handle<A extends unknown[], R>(channel: string, fn: (...args: A) => R | Promise<R>) {
+  handlers.set(channel, fn as (...args: unknown[]) => unknown)
   ipcMain.handle(channel, async (_e, ...args) => {
     try {
       return { ok: true, value: await fn(...(args as A)) }
@@ -96,6 +108,11 @@ function registerIpc() {
     const clean = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
     return setSettings(clean)
   })
+  handle('settings:claudeCode', () => claudeCodeStatus())
+  handle('settings:claudeLogin', () => startClaudeLogin())
+  handle('settings:claudeLoginCode', (code: string) => finishClaudeLogin(code))
+  handle('settings:claudeLoginCancel', () => cancelClaudeLogin())
+  handle('settings:claudeLogout', () => claudeLogout())
   handle('settings:pickDir', async () => {
     const r = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'], defaultPath: getSettings().projectsDir })
     return r.canceled ? null : setSettings({ projectsDir: r.filePaths[0] })
@@ -104,10 +121,11 @@ function registerIpc() {
   handle('ds:list', () => listDesignSystems())
   handle('ds:save', (ds: DesignSystem) => saveDesignSystem(ds))
   handle('ds:delete', (id: string) => deleteDesignSystem(id))
-  handle('ds:fromImage', async () => {
-    const f = await pickFile('Capture, deck ou site', ['png', 'jpg', 'jpeg', 'webp'])
+  // In server mode, the browser uploads the file first and passes its path.
+  handle('ds:fromImage', async (file?: string) => {
+    const f = file ?? (await pickFile('Capture, deck ou site', ['png', 'jpg', 'jpeg', 'webp']))
     if (!f) return null
-    const ds = await enqueue('global', 'Claude lit le design system', () => designSystemFromImage(f), true)
+    const ds = await enqueue('global', 'Claude lit le design system', (ctx) => designSystemFromImage(f, ctx.signal), true)
     saveDesignSystem(ds)
     return ds
   })
@@ -123,7 +141,24 @@ function registerIpc() {
   handle('project:update', (id: string, patch: Partial<Project>) => updateProject(id, patch))
   handle('project:saveEdl', (id: string, edl: Edl) => saveEdl(id, edl))
   handle('project:saveComments', (id: string, c: Comment[]) => saveComments(id, c))
+  handle('project:saveWords', (id: string, w: Word[]) => saveWords(id, w))
   handle('project:saveFrame', (id: string, cid: string, dataUrl: string) => saveCommentFrame(id, cid, dataUrl))
+  handle('assets:add', async (id: string, files?: string[]) => {
+    let list = files
+    if (!list) {
+      const r = await dialog.showOpenDialog({ title: 'Images d’illustration', properties: ['openFile', 'multiSelections'], filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }] })
+      if (r.canceled) return null
+      list = r.filePaths
+    }
+    const out = addIllustrations(id, list)
+    notifyProject(id)
+    return out
+  })
+  handle('assets:remove', (id: string, file: string) => {
+    const out = removeIllustration(id, file)
+    notifyProject(id)
+    return out
+  })
   handle('project:transcribe', (id: string) => transcribeProject(id))
   handle('project:resumeImport', (id: string) => runImportPipeline(id))
 
@@ -137,7 +172,7 @@ function registerIpc() {
     const edl = await enqueue(
       id,
       firstCut ? `Claude monte la ${version}` : `Claude applique ${open.length} commentaire${open.length > 1 ? 's' : ''} → ${version}`,
-      () => (firstCut ? generateFirstCut(b, version, dsId) : applyComments(b, baseEdl!, open, version, dsId)),
+      (ctx) => (firstCut ? generateFirstCut(b, version, dsId, ctx.signal) : applyComments(b, baseEdl!, open, version, dsId, ctx.signal)),
       true
     )
     if (baseEdl && baseEdl.status === 'review') saveEdl(id, { ...baseEdl, status: 'archived' })
@@ -148,26 +183,34 @@ function registerIpc() {
     return version
   })
 
-  handle('ai:reference', async (id: string) => {
-    const f = await pickFile('Vidéo d’exemple', VIDEO_EXT)
+  handle('ai:reference', async (id: string, file?: string) => {
+    const f = file ?? (await pickFile('Vidéo d’exemple', VIDEO_EXT))
     if (!f) return null
-    const recipe = await enqueue(id, 'Analyse de la vidéo d’exemple', (ctx) => recipeFromReference(f, ctx.progress))
+    const recipe = await enqueue(id, 'Analyse de la vidéo d’exemple', (ctx) => recipeFromReference(f, ctx.progress, ctx.signal))
     updateProject(id, { recipe })
     notifyProject(id)
     return recipe
   })
 
-  handle('export:start', (id: string, opts: ExportOptions) => enqueue(id, `Export ${opts.version} ${opts.height}p`, (ctx) => exportVersion(id, opts, ctx)))
+  handle('export:start', (id: string, opts: ExportOptions) => enqueue(id, `Export ${opts.version} ${opts.aspect === '9:16' ? `vertical ${opts.height}×${Math.round((opts.height * 16) / 9)}` : `${opts.height}p`}`, (ctx) => exportVersion(id, opts, ctx)))
   handle('shell:reveal', (p: string) => shell.showItemInFolder(p))
   handle('shell:open', (url: string) => (/^https:\/\//.test(url) ? shell.openExternal(url) : undefined))
   handle('jobs:list', () => listJobs())
   handle('jobs:dismiss', (jobId: string) => dismissJob(jobId))
+  handle('jobs:cancel', (jobId: string) => cancelJob(jobId))
   handle('app:info', () => ({ root: root(), platform: process.platform, version: app.getVersion() }))
 }
 
-app.whenReady().then(() => {
+// Server mode (Docker, Work OS): no window, the editor is a web page served over HTTP.
+if (SERVER) app.setPath('userData', DATA_DIR)
+
+app.whenReady().then(async () => {
   registerProtocol()
   registerIpc()
+  if (SERVER) {
+    setRendererUrl(await startServer())
+    return
+  }
   setRendererUrl(rendererUrl())
   createWindow()
   app.on('activate', () => {
@@ -176,5 +219,6 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // In server mode, the only windows are the export's offscreen ones.
+  if (!SERVER && process.platform !== 'darwin') app.quit()
 })

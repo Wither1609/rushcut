@@ -14,6 +14,11 @@ export function Jobs({ jobs }: { jobs: JobState[] }) {
               {j.status === 'queued' ? 'en attente' : j.status === 'done' ? 'terminé' : j.status === 'error' ? 'échec' : j.progress >= 0 ? `${Math.round(j.progress * 100)} %` : ''}
             </span>
             {j.status === 'error' && <button className="btn sm ghost" onClick={() => void api.dismissJob(j.id)}>Fermer</button>}
+            {(j.status === 'queued' || j.status === 'running') && (
+              <button className="btn sm ghost" aria-label={`Annuler : ${j.label}`} onClick={() => void api.cancelJob(j.id)}>
+                Annuler
+              </button>
+            )}
           </div>
           {j.status === 'error' ? (
             <div className="err">{j.error}</div>

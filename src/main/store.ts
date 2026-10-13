@@ -7,12 +7,15 @@ const file = () => path.join(app.getPath('userData'), 'settings.json')
 const dsFile = () => path.join(app.getPath('userData'), 'design-systems.json')
 
 const defaults = (): Settings => ({
+  // Server mode uses the Claude subscription signed in for Work OS (CLAUDE_CONFIG_DIR).
+  claudeAuth: process.env.RUSHCUT_CLAUDE_AUTH === 'subscription' ? 'subscription' : 'api',
   anthropicKey: '',
+  claudePath: '',
   elevenKey: '',
   claudeModel: 'claude-opus-5-5',
   effort: 'high',
   scribeModel: 'scribe_v2',
-  projectsDir: path.join(app.getPath('documents'), 'Rushcut')
+  projectsDir: process.env.RUSHCUT_DATA_DIR ? path.join(process.env.RUSHCUT_DATA_DIR, 'projects') : path.join(app.getPath('documents'), 'Rushcut')
 })
 
 // API keys are encrypted with the OS keychain (Keychain on Mac, DPAPI on Windows) when available.
@@ -61,6 +64,8 @@ export function setSettings(patch: Partial<Settings>): PublicSettings {
 export function publicSettings(): PublicSettings {
   const s = getSettings()
   return {
+    claudeAuth: s.claudeAuth,
+    claudePath: s.claudePath,
     hasAnthropicKey: !!s.anthropicKey,
     hasElevenKey: !!s.elevenKey,
     claudeModel: s.claudeModel,

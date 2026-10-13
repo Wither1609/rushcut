@@ -17,8 +17,8 @@ const api = {
       ipcRenderer.removeListener(channel, fn)
     }
   },
-  /** Absolute path of a file dropped on the window. */
-  pathForFile: (f: File) => webUtils.getPathForFile(f),
+  /** Path of a file dropped on the window, as the main process can read it (uploaded first in server mode). */
+  fileRef: async (f: File) => webUtils.getPathForFile(f),
   platform: process.platform
 }
 
